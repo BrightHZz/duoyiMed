@@ -134,7 +134,7 @@ relevance:
 ```
 → 读取 templates/t-literature-note.md 获取模板
 → 填充 YAML frontmatter + Markdown 正文
-→ 写入 /Users/wuyouhang/Documents/trae_projects/obsidian/laoNianYiXue/literature/2025-zhang-frailty-xgboost.md
+→ 写入 {OBSIDIAN_HOME}/laoNianYiXue/literature/2025-zhang-frailty-xgboost.md
 → 更新 literature-dashboard.md 中相关引用
 → 更新 projects/frailty-ml-2026/project-brief.md 的 "📚 参考文献" 添加 [[literature/2025-zhang-frailty-xgboost]]
 ```

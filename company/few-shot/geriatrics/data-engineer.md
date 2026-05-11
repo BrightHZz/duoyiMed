@@ -12,7 +12,7 @@
   - 候选预测因子: 人口学、慢性病、功能、认知、心理、实验室
   - 预测窗口: 2 年
 
-数据路径: /Users/wuyouhang/Documents/trae_projects/related to Sarcopenia/charls/
+数据路径: {CHARLS_DATA_DIR}/
 请评估各 wave 的变量覆盖情况并给出数据使用建议。
 ```
 

@@ -14,7 +14,7 @@
   - 需要处理: 缺失值 (MICE), 类别不平衡, 记忆/学习效应
 
 数据文件路径:
-  /Users/wuyouhang/Documents/trae_projects/related to Sarcopenia/charls/analysis/
+  {CHARLS_DATA_DIR}/analysis/
   需要合并: 2013_Health_Status_and_Functioning.csv, 
             2013_Biomarker.csv, 2013_Demographic_Background.csv 等
 
@@ -100,7 +100,7 @@ RANDOM_SEED = 42
 # 1. 数据加载与合并
 # ============================================================
 
-DATA_DIR = "/Users/wuyouhang/Documents/trae_projects/related to Sarcopenia/charls/analysis/"
+DATA_DIR = "{CHARLS_DATA_DIR}/analysis/"
 
 def load_wave_data(wave, files):
     """加载某个 wave 的多个 CSV 并合并"""
@@ -502,7 +502,7 @@ def evaluate(model, loader, device):
 def main():
     from src.data.charls_timeseries_dataset import CHARLSTimeSeriesBuilder, CHARLSSequenceDataset
     
-    DATA_DIR = "/Users/wuyouhang/Documents/trae_projects/related to Sarcopenia/charls/analysis"
+    DATA_DIR = "{CHARLS_DATA_DIR}/analysis"
     
     # 数据
     builder = CHARLSTimeSeriesBuilder(DATA_DIR, seq_len=3, label_len=1, pred_len=2)

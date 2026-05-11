@@ -33,4 +33,4 @@
 
 ## 知识库
 
-Obsidian Vault: `~/Documents/trae_projects/obsidian/miNiaoWaiKe/`
+Obsidian Vault: `{OBSIDIAN_HOME}/miNiaoWaiKe/`

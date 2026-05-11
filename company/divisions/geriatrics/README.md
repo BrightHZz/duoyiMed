@@ -32,4 +32,4 @@
 
 ## 知识库
 
-Obsidian Vault: `~/Documents/trae_projects/obsidian/laoNianYiXue/`
+Obsidian Vault: `{OBSIDIAN_HOME}/laoNianYiXue/`

@@ -220,9 +220,9 @@ Phase 0 由编排器自身执行总体设计师角色，产出《系统设计说
 ### 5.1 多知识库架构
 
 ```
-老年医学: ~/Documents/trae_projects/obsidian/laoNianYiXue/
-泌尿外科: ~/Documents/trae_projects/obsidian/miNiaoWaiKe/
-共享项目: ~/Documents/trae_projects/obsidian/shared-projects/
+老年医学: {OBSIDIAN_HOME}/laoNianYiXue/
+泌尿外科: {OBSIDIAN_HOME}/miNiaoWaiKe/
+共享项目: {OBSIDIAN_HOME}/shared-projects/
 ```
 
 ### 5.2 跨事业部知识共享

@@ -195,13 +195,51 @@ class AgentPromptLoader:
         fewshot = re.sub(r'^# .*\n', '', fewshot, count=1)
         return "\n\n## Few-Shot Examples\n\n" + fewshot.strip()
 
+    # ================================================================
+    # 路径占位符注入 — 将 {PLACEHOLDER} 替换为运行时实际路径
+    # ================================================================
+
+    @staticmethod
+    def _resolve_placeholder(placeholder: str) -> str:
+        """将单个占位符解析为实际路径, 优先环境变量, 其次从 MAW_DATA_HOME/MAW_OBSIDIAN_HOME 推断"""
+        import os as _os
+
+        data_home = _os.environ.get("MAW_DATA_HOME", "/path/to/data")
+        obs_home = _os.environ.get("MAW_OBSIDIAN_HOME", "~/Documents/trae_projects/obsidian")
+        proj_root = _os.environ.get("MAW_PROJECT_ROOT", "/path/to/my-ai-writer")
+        obs_home = _os.path.expanduser(obs_home)
+
+        mappings = {
+            "{CHARLS_DATA_DIR}": _os.environ.get("CHARLS_DATA_DIR", f"{data_home}/charls"),
+            "{CLHLS_DATA_DIR}":  _os.environ.get("CLHLS_DATA_DIR",  f"{data_home}/clhls"),
+            "{MIMIC_DATA_DIR}":  _os.environ.get("MIMIC_DATA_DIR",  f"{data_home}/mimic"),
+            "{SEER_DATA_DIR}":   _os.environ.get("SEER_DATA_DIR",   f"{data_home}/seer"),
+            "{OBSIDIAN_HOME}":   obs_home,
+            "{PROJECT_ROOT}":    proj_root,
+        }
+        return mappings.get(placeholder, placeholder)
+
+    @staticmethod
+    def _inject_paths(text: str) -> str:
+        """将 prompt 文本中的 {PLACEHOLDER} 替换为实际路径值"""
+        result = text
+        # 找所有 {UPPER_PLACEHOLDER} 格式
+        import re
+        placeholders = set(re.findall(r'\{[A-Z_]+\}', result))
+        for ph in placeholders:
+            resolved = AgentPromptLoader._resolve_placeholder(ph)
+            if resolved != ph:
+                result = result.replace(ph, resolved)
+        return result
+
     def load_full_prompt(self, agent_id: str, include_fewshot: bool = True) -> str:
-        """加载 Agent 的完整 prompt (system + few-shot)"""
+        """加载 Agent 的完整 prompt (system + few-shot), 自动注入实际路径"""
         system = self.load_system_prompt(agent_id)
         if include_fewshot:
             fewshot = self.load_fewshot(agent_id)
             system += fewshot
-        return system
+        # 运行时注入实际路径
+        return self._inject_paths(system)
 
     def load_communication_protocol(self) -> str:
         """加载 Agent 间通信协议 (优先 company 版本)"""

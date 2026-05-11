@@ -847,7 +847,7 @@ class ToolRegistry:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "知识库文件路径, 如 'concepts/frailty.md' 或 'data-sources/charls.md'"},
+                    "path": {"type": "string", "description": "知识库文件路径, 如 'concepts/frailty.md' 或 'datasets/charls.md'"},
                 },
                 "required": ["path"],
             },

@@ -1,13 +1,15 @@
-"""引擎配置管理"""
+"""引擎配置管理 — 所有路径从 .env 文件或环境变量推断, 支持跨机器移植"""
 
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 
+from engine.core.env import load_dotenv, resolve_path
+
 
 # ================================================================
-# 数据源配置 — 公司级资产, 不绑定到任何事业部
+# 数据源配置 — 延迟构建, 等 .env 加载后再确定路径
 # ================================================================
 
 @dataclass
@@ -24,81 +26,82 @@ class DataSourceConfig:
         return hash(self.name)
 
 
-# 默认数据源注册表 — 公司级共享
-DEFAULT_DATA_SOURCES: dict[str, DataSourceConfig] = {
-    "CHARLS": DataSourceConfig(
-        name="CHARLS",
-        path=Path("/Users/wuyouhang/Documents/trae_projects/related to Sarcopenia/charls"),
-        category="cohort",
-        description="中国健康与养老追踪调查 (China Health and Retirement Longitudinal Study), ≥45 岁",
-        supported_tools=[
-            "list_datasource_files", "read_datasource_headers",
-            "read_datasource_sample", "search_datasource_variable",
-            "get_variable_distribution",
-            "generate_frailty_variable_report",
-        ],
-        prefetcher_key="cohort",
-    ),
-    "CLHLS": DataSourceConfig(
-        name="CLHLS",
-        path=Path(""),  # 待配置
-        category="cohort",
-        description="中国老年健康影响因素跟踪调查 (Chinese Longitudinal Healthy Longevity Survey), ≥65 岁",
-        supported_tools=["list_datasource_files", "read_datasource_headers"],
-        prefetcher_key="cohort",
-    ),
-    "HRS": DataSourceConfig(
-        name="HRS",
-        path=Path(""),  # 待配置
-        category="cohort",
-        description="美国健康与退休研究 (Health and Retirement Study), ≥50 岁",
-        supported_tools=["list_datasource_files", "read_datasource_headers"],
-        prefetcher_key="cohort",
-    ),
-    "ELSA": DataSourceConfig(
-        name="ELSA",
-        path=Path(""),  # 待配置
-        category="cohort",
-        description="英国老龄化纵向研究 (English Longitudinal Study of Ageing), ≥50 岁",
-        supported_tools=["list_datasource_files", "read_datasource_headers"],
-        prefetcher_key="cohort",
-    ),
-    "UK_BIOBANK": DataSourceConfig(
-        name="UK_BIOBANK",
-        path=Path(""),  # 待配置
-        category="cohort",
-        description="英国生物银行 (UK Biobank), 40-69 岁, 含基因+影像+EHR 链接",
-        supported_tools=["list_datasource_files", "read_datasource_headers"],
-        prefetcher_key="cohort",
-    ),
-    "NHANES": DataSourceConfig(
-        name="NHANES",
-        path=Path(""),  # 待配置
-        category="cohort",
-        description="美国国家健康与营养调查 (National Health and Nutrition Examination Survey)",
-        supported_tools=["list_datasource_files", "read_datasource_headers"],
-        prefetcher_key="cohort",
-    ),
-    "MIMIC-IV": DataSourceConfig(
-        name="MIMIC-IV",
-        path=Path(""),  # 通过环境变量 MIMIC_DATA_DIR 配置
-        category="ehr",
-        description="ICU 电子健康记录数据库 (Medical Information Mart for Intensive Care IV), 含诊断/药物/实验室/微生物",
-        supported_tools=[
-            "list_datasource_files", "read_datasource_headers",
-            "read_datasource_sample", "search_datasource_variable",
-        ],
-        prefetcher_key="ehr",
-    ),
-    "SEER": DataSourceConfig(
-        name="SEER",
-        path=Path(""),  # 通过环境变量 SEER_DATA_DIR 配置
-        category="registry",
-        description="美国癌症统计数据库 (Surveillance, Epidemiology, and End Results), 含诊断/治疗/生存数据",
-        supported_tools=["list_datasource_files", "read_datasource_headers"],
-        prefetcher_key="registry",
-    ),
-}
+def _build_data_sources() -> dict[str, DataSourceConfig]:
+    """构建数据源注册表 — 路径从环境变量推断, 延迟执行以确保 .env 已加载"""
+    return {
+        "CHARLS": DataSourceConfig(
+            name="CHARLS",
+            path=resolve_path("CHARLS_DATA_DIR", "{MAW_DATA_HOME}/charls"),
+            category="cohort",
+            description="中国健康与养老追踪调查 (China Health and Retirement Longitudinal Study), ≥45 岁",
+            supported_tools=[
+                "list_datasource_files", "read_datasource_headers",
+                "read_datasource_sample", "search_datasource_variable",
+                "get_variable_distribution",
+                "generate_frailty_variable_report",
+            ],
+            prefetcher_key="cohort",
+        ),
+        "CLHLS": DataSourceConfig(
+            name="CLHLS",
+            path=resolve_path("CLHLS_DATA_DIR", "{MAW_DATA_HOME}/clhls"),
+            category="cohort",
+            description="中国老年健康影响因素跟踪调查 (Chinese Longitudinal Healthy Longevity Survey), ≥65 岁",
+            supported_tools=["list_datasource_files", "read_datasource_headers"],
+            prefetcher_key="cohort",
+        ),
+        "HRS": DataSourceConfig(
+            name="HRS",
+            path=resolve_path("HRS_DATA_DIR", "{MAW_DATA_HOME}/hrs"),
+            category="cohort",
+            description="美国健康与退休研究 (Health and Retirement Study), ≥50 岁",
+            supported_tools=["list_datasource_files", "read_datasource_headers"],
+            prefetcher_key="cohort",
+        ),
+        "ELSA": DataSourceConfig(
+            name="ELSA",
+            path=resolve_path("ELSA_DATA_DIR", "{MAW_DATA_HOME}/elsa"),
+            category="cohort",
+            description="英国老龄化纵向研究 (English Longitudinal Study of Ageing), ≥50 岁",
+            supported_tools=["list_datasource_files", "read_datasource_headers"],
+            prefetcher_key="cohort",
+        ),
+        "UK_BIOBANK": DataSourceConfig(
+            name="UK_BIOBANK",
+            path=resolve_path("UK_BIOBANK_DATA_DIR", "{MAW_DATA_HOME}/ukbiobank"),
+            category="cohort",
+            description="英国生物银行 (UK Biobank), 40-69 岁, 含基因+影像+EHR 链接",
+            supported_tools=["list_datasource_files", "read_datasource_headers"],
+            prefetcher_key="cohort",
+        ),
+        "NHANES": DataSourceConfig(
+            name="NHANES",
+            path=resolve_path("NHANES_DATA_DIR", "{MAW_DATA_HOME}/nhanes"),
+            category="cohort",
+            description="美国国家健康与营养调查 (National Health and Nutrition Examination Survey)",
+            supported_tools=["list_datasource_files", "read_datasource_headers"],
+            prefetcher_key="cohort",
+        ),
+        "MIMIC-IV": DataSourceConfig(
+            name="MIMIC-IV",
+            path=resolve_path("MIMIC_DATA_DIR", "{MAW_DATA_HOME}/mimic"),
+            category="ehr",
+            description="ICU 电子健康记录数据库 (Medical Information Mart for Intensive Care IV), 含诊断/药物/实验室/微生物",
+            supported_tools=[
+                "list_datasource_files", "read_datasource_headers",
+                "read_datasource_sample", "search_datasource_variable",
+            ],
+            prefetcher_key="ehr",
+        ),
+        "SEER": DataSourceConfig(
+            name="SEER",
+            path=resolve_path("SEER_DATA_DIR", "{MAW_DATA_HOME}/seer"),
+            category="registry",
+            description="美国癌症统计数据库 (Surveillance, Epidemiology, and End Results), 含诊断/治疗/生存数据",
+            supported_tools=["list_datasource_files", "read_datasource_headers"],
+            prefetcher_key="registry",
+        ),
+    }
 
 # 事业部常用数据源 (仅作为默认推荐, 不限制使用)
 DIVISION_DEFAULT_SOURCES: dict[str, list[str]] = {
@@ -119,20 +122,12 @@ class EngineConfig:
     # --- 公司模式 ---
     active_divisions: list = field(default_factory=lambda: ["geriatrics", "urology"])
 
-    # --- 多知识库 ---
-    obsidian_vault: Path = field(
-        default_factory=lambda: Path(
-            "/Users/wuyouhang/Documents/trae_projects/obsidian/laoNianYiXue"
-        )
-    )
-    # 各事业部的知识库路径
-    obsidian_vaults: dict = field(default_factory=lambda: {
-        "geriatrics": Path("/Users/wuyouhang/Documents/trae_projects/obsidian/laoNianYiXue/"),
-        "urology": Path("/Users/wuyouhang/Documents/trae_projects/obsidian/miNiaoWaiKe/"),
-    })
+    # --- 多知识库 (在 __post_init__ 中填充实际路径) ---
+    obsidian_vault: Path = field(default_factory=Path)
+    obsidian_vaults: dict = field(default_factory=dict)
 
-    # --- 多数据源 (公司级资产, 所有事业部均可使用) ---
-    data_sources: dict = field(default_factory=lambda: dict(DEFAULT_DATA_SOURCES))
+    # --- 多数据源 (在 __post_init__ 中填充) ---
+    data_sources: dict = field(default_factory=dict)
 
     # 事业部常用数据源 (仅默认推荐, 不限制实际使用)
     division_default_sources: dict = field(default_factory=lambda: dict(DIVISION_DEFAULT_SOURCES))
@@ -200,10 +195,32 @@ class EngineConfig:
         return all_sources
 
     def __post_init__(self):
+        # 1. 加载 .env 文件 — 必须在所有路径解析之前
+        load_dotenv(self.project_root)
+
+        # 2. Agent/Company 目录
         if self.agents_dir is None:
             self.agents_dir = self.project_root / "agents"
         if self.company_dir is None:
             self.company_dir = self.project_root / "company"
+
+        # 3. 知识库路径 — 从 MAW_OBSIDIAN_HOME 推断
+        obs_home = os.environ.get("MAW_OBSIDIAN_HOME", "")
+        if not obs_home:
+            obs_home = str(Path.home() / "Documents" / "trae_projects" / "obsidian")
+
+        if not str(self.obsidian_vault) or str(self.obsidian_vault) == ".":
+            self.obsidian_vault = Path(obs_home) / "laoNianYiXue"
+
+        if not self.obsidian_vaults:
+            self.obsidian_vaults = {
+                "geriatrics": Path(obs_home) / "laoNianYiXue",
+                "urology": Path(obs_home) / "miNiaoWaiKe",
+            }
+
+        # 4. 数据源 — 从环境变量推断路径
+        if not self.data_sources:
+            self.data_sources = _build_data_sources()
 
 
 def load_config(**overrides) -> EngineConfig:

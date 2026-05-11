@@ -78,7 +78,7 @@ Orchestrator → Agent，要求执行某个任务。
         "source": "data-engineer",
         "message_id": "msg_20260504_003",
         "summary": "CHARLS Waves 1-4, Health_Status_and_Functioning + Biomarker + Blood",
-        "path": "/Users/wuyouhang/Documents/trae_projects/related to Sarcopenia/charls/"
+        "path": "{CHARLS_DATA_DIR}/"
       },
       "literature_context": {
         "source": "research-assistant",

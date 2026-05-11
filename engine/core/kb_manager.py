@@ -27,7 +27,7 @@ class KnowledgeBaseManager:
         return self.vault
 
     def _ensure_dirs(self):
-        for d in ["projects", "literature", "methods", "data-sources", "concepts", "templates"]:
+        for d in ["projects", "literature", "methods", "datasets", "concepts", "templates"]:
             (self.vault / d).mkdir(parents=True, exist_ok=True)
 
     # ================================================================

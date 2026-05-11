@@ -285,7 +285,7 @@ class DataPrefetcher:
         # 活跃数据源的知识库参考 (所有数据源均可使用)
         if data_sources:
             for ds_name in data_sources:
-                kb_path = f"data-sources/{ds_name.lower().replace(' ', '-')}.md"
+                kb_path = f"datasets/{ds_name.lower().replace(' ', '-')}.md"
                 try:
                     r = json.loads(self.tools.execute("read_kb_file", {
                         "path": kb_path

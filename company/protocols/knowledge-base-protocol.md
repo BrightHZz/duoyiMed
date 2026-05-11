@@ -5,9 +5,9 @@
 公司模式下，各事业部拥有独立的知识库：
 
 ```
-老年医学: ~/Documents/trae_projects/obsidian/laoNianYiXue/
-泌尿外科: ~/Documents/trae_projects/obsidian/miNiaoWaiKe/
-共享项目: ~/Documents/trae_projects/obsidian/shared-projects/
+老年医学: {OBSIDIAN_HOME}/laoNianYiXue/
+泌尿外科: {OBSIDIAN_HOME}/miNiaoWaiKe/
+共享项目: {OBSIDIAN_HOME}/shared-projects/
 ```
 
 共享服务 Agent 根据通信协议中的 `division` 字段自动选择对应的知识库。
