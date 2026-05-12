@@ -487,6 +487,85 @@ def check_ref_recency(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 scientific-writer 输出)"
 
 
+def check_all_refs_cited_in_text(outputs: dict, orch) -> tuple:
+    """每篇参考文献必须在正文中被引用 — 防止为满足 recency 比例堆砌无关文献
+
+    钱学森闭环控制教训: 单指标优化 (recency ≥80%) 会产生反向激励，Agent 通过堆砌近期
+    但无关的文献来提高比例。此检查作为反制措施: 每篇 [n] 必须至少被正文引用一次。
+
+    起因: 2026-05-12 发现为满足 80% 时效性, Agent 添加了十几篇无关近期文献,
+    这些文献未被正文引用, 纯粹用于稀释分母。
+    """
+    import re
+
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
+            # 1. 分离正文和 References
+            ref_section_match = re.search(
+                r'(?:##\s*References?|##\s*参考文献)',
+                output, re.IGNORECASE
+            )
+            if not ref_section_match:
+                return True, "跳过 (无 References 章节)"
+
+            ref_start = ref_section_match.start()
+            body_text = output[:ref_start]
+            ref_text = output[ref_start:]
+
+            # 2. 从 References 中提取所有引用编号 [n]
+            ref_numbers = set()
+            for m in re.finditer(r'(?:^|\n)\s*(?:\[(\d+)\]|(\d+)\.)\s', ref_text):
+                num = m.group(1) or m.group(2)
+                ref_numbers.add(int(num))
+
+            # 也匹配 [1],[2],[3] 紧凑格式
+            for m in re.finditer(r'\[(\d+)\]', ref_text):
+                ref_numbers.add(int(m.group(1)))
+
+            if not ref_numbers:
+                return True, "跳过 (References 中未检测到编号引用)"
+
+            # 3. 从正文中提取所有引用编号 [n]
+            cited_numbers = set()
+            for m in re.finditer(r'\[(\d+)\]', body_text):
+                cited_numbers.add(int(m.group(1)))
+
+            # 4. 找未被引用的文献
+            uncited = ref_numbers - cited_numbers
+            # 找正文引用了但 References 中不存在的 (孤儿引用)
+            orphan = cited_numbers - ref_numbers
+
+            violations = []
+            if uncited:
+                sorted_uncited = sorted(uncited)
+                violations.append(
+                    f"{len(uncited)} 篇文献未被正文引用: [{', '.join(str(n) for n in sorted_uncited[:10])}"
+                    + (f", ...等{len(uncited)}篇" if len(uncited) > 10 else "]")
+                    + " — 可能为满足 recency 比例而堆砌的无关文献"
+                )
+            if orphan:
+                sorted_orphan = sorted(orphan)
+                violations.append(
+                    f"{len(orphan)} 处正文引用在 References 中无对应条目: "
+                    f"[{', '.join(str(n) for n in sorted_orphan[:10])}"
+                    + (f", ...等{len(orphan)}处" if len(orphan) > 10 else "]")
+                )
+
+            if violations:
+                return False, (
+                    f"参考文献引用完整性不通过:\n"
+                    + "\n".join(f"  • {v}" for v in violations)
+                    + f"\n\n总计: References 中 {len(ref_numbers)} 篇, 正文引用 {len(cited_numbers)} 篇, "
+                    + f"未引用 {len(uncited)} 篇, 孤儿引用 {len(orphan)} 处"
+                )
+
+            return True, (
+                f"参考文献引用完整性通过: References {len(ref_numbers)} 篇, "
+                f"正文引用 {len(cited_numbers)} 篇, 未引用 0, 孤儿引用 0 ✓"
+            )
+    return True, "跳过 (无 scientific-writer 输出)"
+
+
 def check_discussion_four_paragraphs(outputs: dict, orch) -> tuple:
     """Discussion 四段完整 (¶1-¶4 空行分隔)"""
     for agent_id, output in outputs.items():
@@ -1673,6 +1752,166 @@ def check_figure_naming_convention(outputs: dict, orch) -> tuple:
     return True, f"Figure 命名格式通过: {len(png_files)} 个 .png 文件均符合规范 ✓"
 
 
+def check_all_figures_have_images(outputs: dict, orch) -> tuple:
+    """每张 Figure caption 必须有对应的 .png 图像 — 防止 generate_figures.py 生成 caption 但跳过图像生成
+
+    起因: 2026-05-12 发现 Figure 1 被 generate_figures.py 标记为 "manual diagram" 后仅生成
+    Figure1_caption.md, 没有生成实际图像。Gate 6 #6 检查了文件存在性和命名, 但未检查 caption↔image
+    对应关系。此检查补齐该缺口。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    figures_dir = proj_dir / 'figures'
+    if not figures_dir.exists():
+        return True, "跳过 (figures/ 目录不存在)"
+
+    # 1. 从 caption 文件提取 Figure 编号
+    caption_files = list(figures_dir.glob('*caption*.md'))
+    if not caption_files:
+        return True, "跳过 (未找到 Figure caption 文件)"
+
+    caption_fig_numbers = {}  # {fig_number: caption_filename}
+    for cf in caption_files:
+        m = re.match(r'(?:Figure|fig)(S?\d+)', cf.name, re.IGNORECASE)
+        if m:
+            caption_fig_numbers[m.group(1)] = cf.name
+
+    if not caption_fig_numbers:
+        return True, "跳过 (caption 文件名无法解析 Figure 编号)"
+
+    # 2. 从 .png 图像提取 Figure 编号
+    png_files = list(figures_dir.glob('*.png'))
+    png_fig_numbers = set()
+    for pf in png_files:
+        m = re.match(r'Figure(S?\d+)', pf.name, re.IGNORECASE)
+        if m:
+            png_fig_numbers.add(m.group(1))
+
+    # 3. 每个有 caption 的 Figure 必须有对应图像
+    missing_images = []
+    for num in sorted(caption_fig_numbers.keys(),
+                       key=lambda x: (x.startswith('S'), int(x.lstrip('S')))):
+        if num not in png_fig_numbers:
+            missing_images.append(
+                f"Figure {num} — caption {caption_fig_numbers[num]} 存在, "
+                f"但无对应图像 (未找到 Figure{num}_*.png)"
+            )
+
+    if missing_images:
+        return False, (
+            f"Figure 图像缺失 — {len(missing_images)} 张图有 caption 但无图像:\n"
+            + "\n".join(f"  • {m}" for m in missing_images)
+            + "\n\n可能原因: generate_figures.py 将 Figure 标记为 'manual diagram' 后静默跳过。"
+            + "\n请手动创建图像或修改 generate_figures.py 生成占位图后重跑。"
+        )
+
+    return True, (
+        f"Figure caption↔image 对应完整: {len(caption_fig_numbers)} 个 caption "
+        f"均有对应 .png ✓"
+    )
+
+
+def check_figure_text_citation(outputs: dict, orch) -> tuple:
+    """每张 Figure 必须在正文中被引用 — grep manuscript 确保 Figure[N]_* 文件名有对应 (Figure N) 引用
+
+    起因: 2026-05-12 发现 Figure 1 只有 caption 无图像, Figure 1/2 正文漏引用。
+    Gate 6 #6 检查了存在性和命名, 但未检查「正文是否引用了每张图」。
+    此检查补齐该缺口。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 收集所有 Figure 文件，提取 Figure 编号
+    figures_dir = proj_dir / 'figures'
+    submission_figures_dir = proj_dir / 'submission' / 'figures'
+
+    fig_numbers = set()
+    for d in [figures_dir, submission_figures_dir]:
+        if not d.exists():
+            continue
+        for f in d.glob('*.png'):
+            m = re.match(r'Figure(S?\d+)', f.name, re.IGNORECASE)
+            if m:
+                fig_numbers.add(m.group(1))  # e.g. "1", "2", "S1"
+
+    if not fig_numbers:
+        return True, "跳过 (未找到 Figure 文件)"
+
+    # 2. 收集正文 — manuscript.md + sections/05_results.md
+    text_sources = []
+    manuscript = proj_dir / 'submission' / 'manuscript.md'
+    if manuscript.exists():
+        try:
+            text_sources.append(manuscript.read_text())
+        except OSError:
+            pass
+
+    results_md = proj_dir / 'sections' / '05_results.md'
+    if results_md.exists():
+        try:
+            text_sources.append(results_md.read_text())
+        except OSError:
+            pass
+
+    if not text_sources:
+        return True, "跳过 (无 manuscript 或 results 文件)"
+
+    combined_text = '\n'.join(text_sources)
+
+    # 3. 对每个 Figure 编号，grep 正文中是否有引用
+    uncited = []
+    for num in sorted(fig_numbers, key=lambda x: (x.startswith('S'), int(x.lstrip('S')))):
+        # 匹配模式: Figure 1, Figure S1, Fig. 1, (Figure 1), (Fig. 1)
+        patterns = [
+            rf'\(Figure\s+{num}\)',       # (Figure 1)
+            rf'Figure\s+{num}[^\.]',      # Figure 1: 或 Figure 1,
+            rf'\(Fig\.?\s+{num}\)',       # (Fig. 1) 或 (Fig 1)
+            rf'Fig\.?\s+{num}[^\.]',      # Fig. 1: 或 Fig 1,
+        ]
+        cited = any(re.search(p, combined_text, re.IGNORECASE) for p in patterns)
+        if not cited:
+            uncited.append(f"Figure {num}")
+
+    if uncited:
+        return False, (
+            f"Figure 正文引用缺失 — {len(uncited)} 张图未在正文中引用:\n"
+            + "\n".join(f"  • {f} — 请添加 (Figure N) 引用到 manuscript 或 Results 中" for f in uncited)
+        )
+
+    return True, f"Figure 正文引用完整: {len(fig_numbers)} 张图均被引用 ✓"
+
+
 # ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
@@ -1766,6 +2005,7 @@ GATE_DEFINITIONS = {
             "doi_verified": check_doi_verification,
             "ref_count": check_ref_count,
             "ref_recency": check_ref_recency,
+            "all_refs_cited": check_all_refs_cited_in_text,
             "discussion_paragraphs": check_discussion_four_paragraphs,
             "discussion_no_subheadings": check_discussion_no_subheadings,
             "discussion_no_conclusion": check_discussion_p4_no_conclusion,
@@ -1774,6 +2014,8 @@ GATE_DEFINITIONS = {
             "baseline_compliance": check_baseline_compliance,
             "submission_integrity": check_submission_structure_integrity,
             "figure_naming": check_figure_naming_convention,
+            "figure_has_image": check_all_figures_have_images,
+            "figure_text_citation": check_figure_text_citation,
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

@@ -43,6 +43,7 @@ from engine.core.gate_checks import (
     check_doi_verification,
     check_ref_count,
     check_ref_recency,
+    check_all_refs_cited_in_text,
     check_discussion_four_paragraphs,
     check_discussion_no_subheadings,
     check_discussion_p4_no_conclusion,
@@ -52,10 +53,12 @@ from engine.core.gate_checks import (
     check_baseline_compliance,
     check_submission_structure_integrity,
     check_figure_naming_convention,
+    check_all_figures_have_images,
+    check_figure_text_citation,
 )
 
 
-# Gate 6 全部 28 项 Python auto check 注册表
+# Gate 6 全部 30 项 Python auto check 注册表
 # (check_id, check_fn, description)
 GATE6_PYTHON_CHECKS = [
     # 前置检查
@@ -76,6 +79,7 @@ GATE6_PYTHON_CHECKS = [
     ("doi_verified", check_doi_verification, "DOI 验证通过 (fake=0)"),
     ("ref_count", check_ref_count, "参考文献 ≥25/≥45"),
     ("ref_recency", check_ref_recency, "参考文献时效性 ≥80%"),
+    ("all_refs_cited", check_all_refs_cited_in_text, "每篇参考文献在正文中被引用"),
     # 内容检查
     ("auc_has_ci", check_auc_has_ci, "AUC 带 95% CI"),
     ("effect_size_with_ci", check_effect_size_with_ci, "效应量+CI 报告"),
@@ -93,6 +97,8 @@ GATE6_PYTHON_CHECKS = [
     ("numerical_traceability", check_numerical_traceability, "数值可追溯性 (偏差 <0.1%)"),
     ("baseline_compliance", check_baseline_compliance, "Figure 产自基线数据"),
     ("submission_integrity", check_submission_structure_integrity, "投稿层结构完整性"),
+    ("figure_has_image", check_all_figures_have_images, "每张 Figure caption 有对应图像"),
+    ("figure_text_citation", check_figure_text_citation, "每张 Figure 在正文中被引用"),
 ]
 
 
