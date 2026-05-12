@@ -46,6 +46,7 @@ from .consistency_checker import ConsistencyChecker
 from .project_predictor import ProjectPredictor, ProjectProfile, infer_profile
 from .adaptive_scheduler import AdaptiveScheduler
 from .baseline_manager import BaselineManager
+from .preflight_scanner import PreflightScanner
 
 
 # ================================================================
@@ -173,12 +174,12 @@ PROJECT_PHASES = {
             {
                 "name": "tables",
                 "agents": ["research-assistant"],
-                "task_prompt": "{user_request}\n\n请根据上游数据生成 Table 1 (基线特征表)、Table 2 (模型性能对比)、Table 3 (亚组分析)。",
+                "task_prompt": "{user_request}\n\n请根据上游数据生成 Table 1 (基线特征表)、Table 2 (模型性能对比)、Table 3 (亚组分析)，写入 tables/ 目录。",
             },
             {
                 "name": "figures",
                 "agents": ["ml-engineer"],
-                "task_prompt": "{user_request}\n\n请生成论文图表: Figure 1 (队列流程图)、Figure 2 (ROC曲线)、Figure 3 (校准图)、Figure 4 (SHAP特征重要性)。",
+                "task_prompt": "{user_request}\n\n请生成论文图表，文件命名须严格遵循 Figure[N]_[descriptor].[ext] 格式:\n- Figure1_cohort-flow-diagram.png + .tiff (队列流程图/Figure 1)\n- Figure2_roc-curve.png + .tiff (ROC曲线/Figure 2)\n- Figure3_calibration-plot.png + .tiff (校准曲线/Figure 3)\n- Figure4_feature-importance.png + .tiff (SHAP特征重要性/Figure 4)\n对应的 Figure[N]_caption.md 和 Figure[N]_[descriptor]_data.json 也须使用同编号体系。\n所有图片写入 figures/ 目录。",
             },
             {
                 "name": "sections",
@@ -188,15 +189,16 @@ PROJECT_PHASES = {
             {
                 "name": "humanize",
                 "agents": ["humanizer"],
-                "task_prompt": "{user_request}\n\n{step_results}\n\n请对 scientific-writer 产出的各章节逐节执行去 AI 味改写。保留所有数据和引用不变。输出逐节改动记录和改写后文本。",
+                "task_prompt": "{user_request}\n\n{step_results}\n\n请对 scientific-writer 产出的各章节逐节执行去 AI 味改写。保留所有数据和引用不变。输出逐节改动记录和改写后文本，写入 sections/humanize-log.md。",
             },
             {
                 "name": "assembly",
                 "agents": ["scientific-writer"],
-                "task_prompt": "{user_request}\n\n{step_results}\n\n请将各章节合稿为完整 manuscript.md。",
+                "task_prompt": "{user_request}\n\n{step_results}\n\n请将 sections/ 中的各章节文件和 tables/ 中的表格组装为完整论文。\n- 合稿写入 submission/manuscript.md (投稿层唯一文件，切勿创建 submission/sections/ 子目录)\n- 零件层文件 (sections/*.md, tables/*.md, figures/*.py) 已在前面步骤中写入，本步骤只需引用它们\n- ⚠️ 投稿终稿中禁止出现 [Classic — ...] / [Foundational — ...] / [数据待确认] 等内部质控标记，这些标记仅保留在 sections/08_references.md 供审查使用",
             },
         ],
         "expected_outputs": [
+            # 零件层 (working dirs) — Agent 产出
             "sections/01_title.md",
             "sections/02_abstract.md",
             "sections/03_introduction.md",
@@ -205,20 +207,25 @@ PROJECT_PHASES = {
             "sections/06_discussion.md",
             "sections/07_conclusion.md",
             "sections/08_references.md",
-            "sections/manuscript.md",
+            "sections/humanize-log.md",
             "tables/table1_baseline.md",
             "tables/table2_model_performance.md",
             "tables/table3_subgroup.md",
-            "figures/roc_curve.png",
-            "figures/calibration.png",
-            "figures/feature_importance.png",
-            "figures/dca.png",
-            "figures/fig1_caption.md",
-            "figures/fig2_caption.md",
-            "figures/fig3_caption.md",
-            "figures/fig4_caption.md",
-            "generate_figures.py",
-            "sections/humanize-log.md",
+            "figures/generate_figures.py",
+            "figures/figure_descriptions.md",
+            "figures/Figure1_caption.md",
+            "figures/Figure2_caption.md",
+            "figures/Figure3_caption.md",
+            "figures/Figure4_caption.md",
+            # 投稿层 (submission) — 最终组装交付件
+            "submission/manuscript.md",
+            "submission/tables/table1_baseline.csv",
+            "submission/tables/table2_model_performance.csv",
+            "submission/tables/table3_subgroup.csv",
+            "submission/figures/Figure1_cohort-flow-diagram.png",
+            "submission/figures/Figure2_roc-curve.png",
+            "submission/figures/Figure3_calibration-plot.png",
+            "submission/figures/Figure4_feature-importance.png",
         ],
     },
 }
@@ -242,7 +249,7 @@ LITERATURE_PHASES = {
 
 
 # ================================================================
-# 跨 Phase 反馈环 B — 自动检测规则
+# 跨 Phase 反馈环 B — 自动检测规则 (共8条)
 # 钱学森工程控制论: 下游发现上游问题时, 自动触发回退 (积分控制 - 累积偏差修正)
 # ================================================================
 
@@ -332,7 +339,33 @@ FEEDBACK_B_TRIGGERS = {
             "message": "写作阶段发现研究定义不够清晰, 建议 PI 补充",
         },
     },
+    # 🆕 全局触发 #7: 脚本崩溃检测 (2026-05-12 新增)
+    # 任何 Phase 脚本崩溃且根因是内存安全违规 → 扫描同项目所有 .py
+    # 此触发器在 _handle_preflight_failure() 中实现
+    "script_crash": {
+        "all_phases": True,
+        "signals": [
+            "kernel panic", "memory exhaustion", "内存耗尽",
+            "OOM", "Killed: 9", "segmentation fault",
+            "n_jobs=-1", "CoW explosion",
+        ],
+        "severity": "critical",
+        "action": "block_all_scripts",
+        "message": "脚本崩溃且根因为内存安全违规 → 自动扫描同项目所有 .py → 创建修复清单 → 阻止任何脚本执行直到清零",
+    },
+    # 🆕 全局触发 #8: lessons-learned 新规则传播 (2026-05-12 新增)
+    "lessons_learned": {
+        "all_phases": True,
+        "signals": [
+            "lessons-learned", "教训文档",
+        ],
+        "severity": "high",
+        "action": "diff_and_block",
+        "message": "lessons-learned 文件更新 → 自动提取新规则 → diff 同项目所有脚本 → 不一致项计入 Gate 前置阻断",
+    },
 }
+
+FEEDBACK_B_COUNT = 8  # 共8条触发规则
 
 
 class ResearchOrchestrator:
@@ -860,6 +893,33 @@ then: [回退到哪个 Phase, 做什么修正]
             sds_data = all_outputs.get("system_design", {})
             sds_text = sds_data.get("__sds__", "") if isinstance(sds_data, dict) else ""
 
+            # 🆕 执行前安全扫描 (编排原则 #12)
+            if phase_id in ("execution", "external_validation", "writing"):
+                preflight_result = self._run_preflight_check(phase_id, project_id)
+                if not preflight_result["pass"]:
+                    all_outputs[phase_id] = {"_preflight_blocked": preflight_result["report"]}
+                    gate_results[phase_id] = {
+                        "phase_id": phase_id,
+                        "gate_id": f"gate_{phase_id}",
+                        "timestamp": datetime.now().isoformat(),
+                        "status": "fail",
+                        "checks": [{
+                            "check_id": "preflight_safety_scan",
+                            "description": "执行前安全扫描",
+                            "check_type": "auto",
+                            "result": "fail",
+                            "detail": preflight_result["report"],
+                        }],
+                        "conditions": [],
+                        "rework_count": 0,
+                        "max_rework": 3,
+                    }
+                    print(f"  ❌ Preflight 安全扫描不通过, 阻断 Phase {phase_id} 执行")
+                    # 🆕 B环触发: 安全扫描失败 → 扫描同项目所有 .py → 创建修复清单
+                    self._handle_preflight_failure(phase_id, project_id, preflight_result)
+                    phase_index += 1  # 跳过此 Phase, 但继续检查后续 Phase 的 preflight
+                    continue
+
             # Phase 执行路由: 辩论模式 > 两轮模式 > 写作多步骤 > 标准模式
             if phase_def.get("debate_mode"):
                 # 🆕 钱学森研讨厅: 并行辩论替代流水线审查
@@ -1023,6 +1083,8 @@ then: [回退到哪个 Phase, 做什么修正]
                 self._freeze_baseline_if_safe(
                     project_id, phase_id, phase_result, gate_result
                 )
+                # 🆕 自适应调度: 记录 Gate 结果
+                self._record_gate_for_adaptive(phase_id, status)
                 phase_index += 1
 
             elif status == "conditional_pass":
@@ -1033,6 +1095,8 @@ then: [回退到哪个 Phase, 做什么修正]
                 self._freeze_baseline_if_safe(
                     project_id, phase_id, phase_result, gate_result
                 )
+                # 🆕 自适应调度: 记录 Gate 结果
+                self._record_gate_for_adaptive(phase_id, status)
                 phase_index += 1
 
             elif status == "fail":
@@ -1199,6 +1263,10 @@ then: [回退到哪个 Phase, 做什么修正]
                     )
                     step_results[f"{step_name}_{agent_id}"] = result
 
+        # 写入文件系统: 将 Agent 内存输出持久化到 submission/ 目录
+        write_result = self._write_phase6_files(step_results, project_id)
+        outputs["_written_files"] = write_result.get("written_files", [])
+
         # 将所有 step_results 合并到 outputs (保持向后兼容的 agent_id key)
         outputs.update(step_results)
         outputs["_multi_step"] = "True"
@@ -1214,6 +1282,277 @@ then: [回退到哪个 Phase, 做什么修正]
             truncated = value[:1000] + "..." if len(value) > 1000 else value
             parts.append(f"### {key}\n{truncated}")
         return "\n\n".join(parts)
+
+    def _write_phase6_files(self, step_results: dict, project_id: str) -> dict:
+        """将 Phase 6 多步骤产出的内存字符串写入磁盘。
+
+        两层目录结构:
+        - 零件目录 (working): sections/ tables/ figures/ — Agent 产出的分章节/表格/图表零件
+        - 投稿目录 (submission): submission/manuscript.md + submission/tables/*.csv + submission/figures/*.png
+
+        解析失败时 fallback 写入原始输出，不丢数据也不阻塞主流程。
+        """
+        import re
+        import csv
+        import io
+        from pathlib import Path
+
+        # 确定项目根路径
+        vault_path = None
+        if hasattr(self, 'kb') and self.kb:
+            vaults = getattr(self.kb, 'vaults', {})
+            for vp in vaults.values():
+                vault_path = Path(vp)
+                break
+            if not vault_path:
+                vault_path = getattr(self.kb, 'vault_path', None)
+        if not vault_path:
+            print("  ⚠️ [_write_phase6_files] 无法确定 vault 路径, 跳过文件写入")
+            return {}
+
+        proj_dir = Path(vault_path) / 'projects' / project_id
+        submission_dir = proj_dir / 'submission'
+        written = []
+
+        # ---- 定位各步骤输出 ----
+        sections_text = ""
+        tables_text = ""
+        figures_text = ""
+        humanize_text = ""
+        assembly_text = ""
+
+        for key, value in step_results.items():
+            if not isinstance(value, str) or len(value) < 50:
+                continue
+            key_lower = key.lower()
+            if 'sections' in key_lower and 'scientific-writer' in key_lower:
+                sections_text = value
+            elif 'tables' in key_lower:
+                tables_text = value
+            elif 'figures' in key_lower:
+                figures_text = value
+            elif 'humanize' in key_lower:
+                humanize_text = value
+            elif 'assembly' in key_lower:
+                assembly_text = value
+
+        # ============================================================
+        # 零件层: 写入 sections/ tables/ figures/ (working dirs)
+        # ============================================================
+
+        # ---- 写入 sections (按 ## 标题分割) ----
+        if sections_text:
+            try:
+                sections_dir = proj_dir / 'sections'
+                sections_dir.mkdir(parents=True, exist_ok=True)
+
+                # 提取 Title (第一个 # 标题)
+                title_match = re.match(r'^#\s+(.+?)(?:\n|$)', sections_text)
+                if title_match:
+                    (sections_dir / '01_title.md').write_text(
+                        f"# {title_match.group(1)}\n", encoding='utf-8')
+                    body = sections_text[title_match.end():]
+                    written.append('sections/01_title.md')
+                else:
+                    body = sections_text
+
+                # 按 ## 标题拆分为块
+                blocks = re.split(r'\n(?=##\s)', body)
+                heading_map = {
+                    'abstract': '02_abstract', '摘要': '02_abstract',
+                    'introduction': '03_introduction', '引言': '03_introduction',
+                    'methods': '04_methods', 'method': '04_methods',
+                    'materials': '04_methods', '方法': '04_methods',
+                    'results': '05_results', 'result': '05_results',
+                    '结果': '05_results',
+                    'discussion': '06_discussion', '讨论': '06_discussion',
+                    'conclusion': '07_conclusion', '结论': '07_conclusion',
+                    'references': '08_references', '参考文献': '08_references',
+                }
+
+                for block in blocks:
+                    block = block.strip()
+                    if not block:
+                        continue
+                    heading_line = block.split('\n')[0]
+                    heading_clean = re.sub(r'^##\s+', '', heading_line).lower().strip()
+                    for keyword, fname in heading_map.items():
+                        if heading_clean.startswith(keyword):
+                            (sections_dir / f'{fname}.md').write_text(block, encoding='utf-8')
+                            written.append(f'sections/{fname}.md')
+                            break
+
+                print(f"  ✅ sections/ 写入完成 ({len([w for w in written if w.startswith('sections/')])} 文件)")
+            except Exception as e:
+                print(f"  ⚠️ sections 解析失败 ({e}), fallback 写入原始输出")
+                sections_dir = proj_dir / 'sections'
+                sections_dir.mkdir(parents=True, exist_ok=True)
+                (sections_dir / '00_all_sections.md').write_text(sections_text, encoding='utf-8')
+                written.append('sections/00_all_sections.md')
+
+        # ---- 写入 humanize log → sections/ ----
+        if humanize_text:
+            try:
+                sections_dir = proj_dir / 'sections'
+                sections_dir.mkdir(parents=True, exist_ok=True)
+                (sections_dir / 'humanize-log.md').write_text(humanize_text, encoding='utf-8')
+                written.append('sections/humanize-log.md')
+                print(f"  ✅ sections/humanize-log.md 写入完成")
+            except Exception as e:
+                print(f"  ⚠️ humanize-log 写入失败 ({e})")
+
+        # ---- 写入 tables (按 Table 标记分割) → tables/ ----
+        table_md_files = {}  # 记录写入的 table md 文件, 供 CSV 转换使用
+        if tables_text:
+            try:
+                tables_dir = proj_dir / 'tables'
+                tables_dir.mkdir(parents=True, exist_ok=True)
+
+                table_blocks = re.split(r'\n(?=(?:##|###)\s*Table\s)', tables_text)
+                table_names = {
+                    '1': 'table1_baseline', '2': 'table2_model_performance',
+                    '3': 'table3_subgroup',
+                    '１': 'table1_baseline', '２': 'table2_model_performance',
+                    '３': 'table3_subgroup',
+                }
+                found_count = 0
+                remaining = []
+                for block in table_blocks:
+                    block = block.strip()
+                    if not block:
+                        continue
+                    tm = re.match(r'(?:##|###)\s*Table\s*([123１２３])', block, re.IGNORECASE)
+                    if tm:
+                        tname = table_names.get(tm.group(1))
+                        if tname:
+                            fpath = f'{tname}.md'
+                            (tables_dir / fpath).write_text(block, encoding='utf-8')
+                            written.append(f'tables/{fpath}')
+                            table_md_files[tname] = block
+                            found_count += 1
+                    else:
+                        remaining.append(block)
+
+                if not found_count:
+                    (tables_dir / 'all_tables.md').write_text(tables_text, encoding='utf-8')
+                    written.append('tables/all_tables.md')
+                elif remaining:
+                    (tables_dir / 'table_notes.md').write_text('\n\n'.join(remaining), encoding='utf-8')
+                    written.append('tables/table_notes.md')
+
+                print(f"  ✅ tables/ 写入完成 ({found_count} 表格)")
+            except Exception as e:
+                print(f"  ⚠️ tables 解析失败 ({e}), fallback 写入原始输出")
+                tables_dir = proj_dir / 'tables'
+                tables_dir.mkdir(parents=True, exist_ok=True)
+                (tables_dir / 'all_tables.md').write_text(tables_text, encoding='utf-8')
+                written.append('tables/all_tables.md')
+
+        # ---- 写入 figures (Python 脚本 + 描述) → figures/ ----
+        if figures_text:
+            try:
+                figures_dir = proj_dir / 'figures'
+                figures_dir.mkdir(parents=True, exist_ok=True)
+
+                code_blocks = re.findall(r'```(?:python)?\n(.*?)```', figures_text, re.DOTALL)
+                if code_blocks:
+                    full_code = '\n\n'.join(code_blocks)
+                    (figures_dir / 'generate_figures.py').write_text(full_code, encoding='utf-8')
+                    written.append('figures/generate_figures.py')
+
+                (figures_dir / 'figure_descriptions.md').write_text(figures_text, encoding='utf-8')
+                written.append('figures/figure_descriptions.md')
+                print(f"  ✅ figures/ 写入完成")
+            except Exception as e:
+                print(f"  ⚠️ figures 写入失败 ({e})")
+
+        # ============================================================
+        # 投稿层: 写入 submission/ (最终投稿文件)
+        # ============================================================
+
+        # ---- 写入 manuscript (assembly 合稿) → submission/manuscript.md ----
+        # 投稿终稿不允许出现内部质控标记 [Classic — ...] / [Foundational — ...]
+        if assembly_text:
+            try:
+                submission_dir.mkdir(parents=True, exist_ok=True)
+                clean_text = self._strip_internal_tags(assembly_text)
+                (submission_dir / 'manuscript.md').write_text(clean_text, encoding='utf-8')
+                written.append('submission/manuscript.md')
+                print(f"  ✅ submission/manuscript.md 写入完成")
+            except Exception as e:
+                print(f"  ⚠️ manuscript 写入失败 ({e})")
+
+        # ---- 转换 tables 为 CSV → submission/tables/ ----
+        if table_md_files:
+            try:
+                st_dir = submission_dir / 'tables'
+                st_dir.mkdir(parents=True, exist_ok=True)
+                csv_count = 0
+                for tname, md_content in table_md_files.items():
+                    csv_content = self._markdown_table_to_csv(md_content)
+                    if csv_content:
+                        csv_name = f'{tname}.csv'
+                        (st_dir / csv_name).write_text(csv_content, encoding='utf-8')
+                        written.append(f'submission/tables/{csv_name}')
+                        csv_count += 1
+                if csv_count:
+                    print(f"  ✅ submission/tables/ CSV 转换完成 ({csv_count} 文件)")
+            except Exception as e:
+                print(f"  ⚠️ submission/tables CSV 转换失败 ({e})")
+
+        if written:
+            print(f"  📁 共写入 {len(written)} 个文件 → {proj_dir}")
+        return {'written_files': written, 'base_dir': str(proj_dir)}
+
+    @staticmethod
+    def _strip_internal_tags(text: str) -> str:
+        """剥离投稿终稿中的内部质控标记。
+
+        移除:
+        - [Classic — ...] / [Classic – ...] / [Classic - ...]
+        - [Foundational — ...] 等同义标记
+        - [数据待确认] 标记 (如有)
+        这些标记仅在零件层 (sections/08_references.md) 保留用于 Gate 检查。
+        """
+        import re
+        # 剥离 [Classic — anything] 和 [Foundational — anything]
+        text = re.sub(r'\s*\[Classic\s*[—–-]\s*[^\]]+\]', '', text)
+        text = re.sub(r'\s*\[Foundational\s*[—–-]\s*[^\]]+\]', '', text)
+        # 剥离 [数据待确认]
+        text = re.sub(r'\s*\[数据待确认\]', '', text)
+        return text
+
+    @staticmethod
+    def _markdown_table_to_csv(md_text: str) -> str:
+        """将 Markdown 表格文本转换为 CSV 字符串。
+
+        解析第一个遇到的 markdown table (| col | col | 分隔线 | val | val |),
+        输出为逗号分隔的 CSV。无有效表格时返回空字符串。
+        """
+        import re
+        import csv
+        import io
+
+        lines = md_text.strip().split('\n')
+        # 找到表格行: 以 | 开头和结尾, 且不是分隔线
+        table_rows = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('|') and stripped.endswith('|'):
+                # 跳过分隔线 (仅含 | - : 空格)
+                if re.match(r'^[\|\s\-:]+$', stripped):
+                    continue
+                cells = [c.strip() for c in stripped[1:-1].split('|')]
+                table_rows.append(cells)
+
+        if len(table_rows) < 2:  # 至少需要表头 + 1 行数据
+            return ""
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        for row in table_rows:
+            writer.writerow(row)
+        return output.getvalue()
 
     def _execute_phase_two_round(
         self, phase_id: str, user_request: str,
@@ -1919,6 +2258,114 @@ then: [回退到哪个 Phase, 做什么修正]
             if self.config.verbose:
                 print(f"  ⚠️ 基线变更处理失败 (不阻塞): {e}")
 
+    def _find_project_dir(self, project_id: str) -> Optional[Path]:
+        """定位项目目录 (从 knowledge base vaults 搜索)"""
+        if hasattr(self, 'kb') and self.kb:
+            vaults = getattr(self.kb, 'vaults', {})
+            for _, vault_path in vaults.items():
+                candidate = Path(vault_path) / 'projects' / project_id
+                if candidate.exists():
+                    return candidate
+        # fallback: 从 baseline_dir 推导
+        baseline_dir = getattr(self.config, 'baseline_dir', None)
+        if baseline_dir:
+            candidate = Path(baseline_dir).parent / project_id
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _run_preflight_check(self, phase_id: str, project_id: str) -> dict:
+        """执行前安全扫描 — 编排原则 #12"""
+        proj_dir = self._find_project_dir(project_id)
+        if not proj_dir:
+            return {"pass": True, "failures": [], "warnings": [],
+                    "report": "跳过 (无法定位项目目录)"}
+
+        scanner = PreflightScanner()
+
+        # 根据 Phase 确定扫描目标
+        phase_scripts_map = {
+            "execution": ["train_model.py", "tune_model.py"],
+            "external_validation": ["external_validation.py"],
+            "writing": ["generate_figures.py", "regenerate_figures_tables.py"],
+        }
+        target_scripts = phase_scripts_map.get(phase_id, ["*.py"])
+
+        result = scanner.scan(proj_dir, target_scripts)
+
+        # 🆕 调度 ml-engineer 时注入安全上下文: 将扫描结果缓存
+        if not hasattr(self, '_preflight_cache'):
+            self._preflight_cache = {}
+        self._preflight_cache[phase_id] = result
+
+        return result
+
+    def _handle_preflight_failure(self, phase_id: str, project_id: str,
+                                   preflight_result: dict):
+        """Preflight 失败时: 输出修复清单 + 创建变更请求 (B环触发)"""
+        failures = preflight_result.get("failures", [])
+        if not failures:
+            return
+
+        # 创建变更请求
+        try:
+            self.baseline_manager.create_change_request(
+                project_id=project_id,
+                from_phase=phase_id,
+                to_phase=phase_id,
+                reason=f"Preflight 安全扫描不通过 ({len(failures)} 项)",
+                downstream_impact=[phase_id],
+                trigger_type="feedback_b",
+            )
+        except Exception:
+            pass  # 不阻塞主流程
+
+        # 如果有内存安全违规，自动扫描同项目所有 .py 文件 (B环 #7)
+        memory_violations = [
+            f for f in failures
+            if any(kw in f.lower() for kw in [
+                'n_jobs', 'nthread', 'pickle', 'forkserver',
+                'omp_num_threads', 'mkl_num_threads', '内存',
+            ])
+        ]
+        if memory_violations:
+            proj_dir = self._find_project_dir(project_id)
+            if proj_dir:
+                all_scripts = [s.name for s in proj_dir.glob('**/*.py')
+                              if s.parent.name != '__pycache__']
+                print(f"  🔍 B环 #7: 扫描同项目 {len(all_scripts)} 个 .py 文件...")
+                scanner = PreflightScanner()
+                full_scan = scanner.scan(proj_dir, all_scripts)
+                if full_scan["failures"]:
+                    print(f"  📋 修复清单 ({len(full_scan['failures'])} 项):")
+                    for f_item in full_scan["failures"][:10]:
+                        print(f"    • {f_item}")
+
+    def _record_gate_for_adaptive(self, phase_id: str, status: str):
+        """自适应调度: 记录 Gate 结果并检查是否需调整策略"""
+        self._ensure_analyzer_loaded()
+        if self._adaptive_scheduler is None:
+            return
+
+        try:
+            # 记录 Gate 结果到调度器
+            self._adaptive_scheduler.record_result(
+                phase_id=phase_id,
+                success=(status == "pass"),
+                degraded=False,  # 暂不从 Gate 结果推断降级
+            )
+
+            # 获取调度建议
+            recommendation = self._adaptive_scheduler.get_recommendation()
+            if recommendation.get("action") != "continue":
+                print(f"  [自适应调度] {recommendation.get('message', '')}")
+                if recommendation.get("action") == "add_redundancy":
+                    print(f"  [自适应调度] 通过率偏低, 建议增加冗余 Agent")
+                elif recommendation.get("action") == "switch_model":
+                    print(f"  [自适应调度] 降级率偏高, 建议切换模型")
+        except Exception:
+            pass  # 自适应调度失败不影响主流程
+
     def _build_agent_input(
         self,
         agent_id: str,
@@ -1948,6 +2395,74 @@ then: [回退到哪个 Phase, 做什么修正]
 经典方法学奠基性论文 (如 TRIPOD, PROBAST, Fried 原始论文等) 不在此限。
 
 这份报告将被 PI 用作 FRAME 评估中 F (Field Scan) 维度的核心输入。
+""")
+
+        # ⭐ ml-engineer 安全规范注入 (编排原则 #12)
+        if agent_id.endswith("ml-engineer"):
+            # 注入 preflight 扫描结果
+            preflight_info = ""
+            if hasattr(self, '_preflight_cache') and phase_id in self._preflight_cache:
+                pf = self._preflight_cache[phase_id]
+                if pf.get("failures") or pf.get("warnings"):
+                    preflight_info = f"""
+## ⚠️ Preflight 安全扫描结果
+
+{chr(10).join(f'- FAIL: {f}' for f in pf.get('failures', [])[:5])}
+{chr(10).join(f'- WARN: {w}' for w in pf.get('warnings', [])[:5])}
+
+请在执行前确认以上安全配置问题已修复。
+"""
+
+            # 获取当前可用内存
+            mem_info = ""
+            try:
+                import psutil
+                avail = psutil.virtual_memory().available / (1024 ** 3)
+                mem_info = f"\n**当前可用内存**: {avail:.1f} GB\n"
+            except Exception:
+                pass
+
+            parts.append(f"""
+## ⚠️ ML 内存安全规范 (9 条规则)
+
+你必须在所有 ML 脚本中严格遵守以下规范:
+
+### 规则 1 — n_jobs 动态上限
+- 默认值: 2, 上限为 min(4, cpu_count // 2)
+- 绝对禁止 n_jobs=-1
+
+### 规则 2 — SMOTE + 多进程 = 危险组合
+- 禁止 Pipeline 内 SMOTE + 并行 CV
+- 安全方案: 训练循环外提前做 SMOTE (推荐)
+
+### 规则 3 — 启动方式
+- Unix: os.environ["JOBLIB_START_METHOD"] = "forkserver"
+
+### 规则 4 — 限制底层线程库
+所有脚本顶部 (import numpy 之前) 必须:
+  os.environ["OMP_NUM_THREADS"] = "2"
+  os.environ["OPENBLAS_NUM_THREADS"] = "2"
+  os.environ["MKL_NUM_THREADS"] = "2"
+  os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+  os.environ["NUMEXPR_NUM_THREADS"] = "2"
+
+### 规则 5 — 运行前预估内存
+预计峰值 > 可用 RAM × 0.7 → 降 n_jobs
+
+### 规则 6 — pickle 加载后覆盖 n_jobs
+model = pickle.load(f); if hasattr(model, 'n_jobs'): model.n_jobs = 1
+
+### 规则 7 — cross_val_predict/cross_val_score 必须显式传 n_jobs
+cross_val_predict(model, X, y, cv=cv, n_jobs=1)
+
+### 规则 8 — 多模型串行加载时必须显式 gc
+加载每个模型后: del data; gc.collect()
+
+### 规则 9 — 关键步骤前后打印内存使用
+psutil.virtual_memory() 输出内存使用率
+
+{preflight_info}{mem_info}
+请确认你的代码遵守以上全部 9 条规则。
 """)
 
         # ⭐ 关键架构: Prefetcher 在 LLM 调用前自动采集所有需要的数据

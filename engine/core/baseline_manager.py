@@ -13,6 +13,7 @@
 
 import json
 import hashlib
+import platform
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -95,6 +96,29 @@ class BaselineManager:
             "timestamp": datetime.now().isoformat(),
             "frozen_by": "orchestrator",
         }
+
+        # 🆕 Phase 3 (execution) 基线额外存储 safety_config
+        if phase_id == "execution":
+            baseline["safety_config"] = {
+                "n_jobs": 2,
+                "cross_val_predict_n_jobs": 1,
+                "model_n_jobs_override": True,
+                "thread_limits": {
+                    "OMP_NUM_THREADS": "2",
+                    "OPENBLAS_NUM_THREADS": "2",
+                    "MKL_NUM_THREADS": "2",
+                    "VECLIB_MAXIMUM_THREADS": "2",
+                    "NUMEXPR_NUM_THREADS": "2",
+                },
+                "start_method": "forkserver",
+                "platform": platform.system().lower() if hasattr(platform, 'system') else "unknown",
+            }
+            baseline["downstream_consumers"] = [
+                "generate_figures.py",
+                "sections/05_results.md",
+                "tables/table2_model_performance.md",
+                "tables/table3_subgroup.md",
+            ]
 
         # 保存基线文件
         file_name = f"baseline_{phase_id}_{new_version}.json"

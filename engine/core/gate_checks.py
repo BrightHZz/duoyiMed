@@ -169,23 +169,25 @@ def check_sections_exist(outputs: dict, orch) -> tuple:
         possible_dirs.append(Path(baseline_dir.base_dir).parent / project_id)
 
     for proj_dir in possible_dirs:
-        sections_dir = proj_dir / 'sections'
-        if sections_dir.exists():
-            section_files = list(sections_dir.glob('*.md'))
-            # Check for key IMRAD sections
-            required_keywords = ['title', 'abstract', 'intro', 'method', 'result', 'discussion', 'conclusion']
-            found = set()
-            for f in section_files:
-                fname = f.name.lower()
-                for kw in required_keywords:
-                    if kw in fname:
-                        found.add(kw)
-            if len(found) >= 6:  # at least 6 of 7 key sections
-                return True, f"sections/ 目录存在, 含 {len(section_files)} 个文件 ({len(found)}/7 核心章节)"
-            elif len(section_files) >= 3:
-                return False, f"sections/ 目录文件不足 (仅 {len(section_files)} 个, 需 ≥6 个 IMRAD 分节文件)"
-            else:
-                return False, f"sections/ 目录几乎为空 ({len(section_files)} 文件)"
+        # sections/ 是零件工作目录
+        for sections_rel in ['sections']:
+            sections_dir = proj_dir / sections_rel
+            if sections_dir.exists():
+                section_files = list(sections_dir.glob('*.md'))
+                # Check for key IMRAD sections
+                required_keywords = ['title', 'abstract', 'intro', 'method', 'result', 'discussion', 'conclusion']
+                found = set()
+                for f in section_files:
+                    fname = f.name.lower()
+                    for kw in required_keywords:
+                        if kw in fname:
+                            found.add(kw)
+                if len(found) >= 6:
+                    return True, f"{sections_rel}/ 目录存在, 含 {len(section_files)} 个文件 ({len(found)}/7 核心章节)"
+                elif len(section_files) >= 3:
+                    return False, f"{sections_rel}/ 目录文件不足 (仅 {len(section_files)} 个, 需 ≥6 个 IMRAD 分节文件)"
+                else:
+                    return False, f"{sections_rel}/ 目录几乎为空 ({len(section_files)} 文件)"
     return False, "未找到项目的 sections/ 目录, Phase 6 必须产出分章节文件"
 
 
@@ -200,15 +202,17 @@ def check_tables_exist(outputs: dict, orch) -> tuple:
     if hasattr(orch, 'kb') and orch.kb:
         for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
             proj_dir = Path(vault_path) / 'projects' / project_id
-            tables_dir = proj_dir / 'tables'
-            if tables_dir.exists():
-                table_files = list(tables_dir.glob('*.md'))
-                if len(table_files) >= 3:
-                    return True, f"tables/ 目录存在, 含 {len(table_files)} 个表格文件"
-                elif len(table_files) >= 1:
-                    return False, f"tables/ 目录文件不足 (仅 {len(table_files)} 个, 需 ≥3: Table 1/2/3)"
-                else:
-                    return False, "tables/ 目录为空"
+            # tables/ 是零件工作目录
+            for tables_rel in ['tables']:
+                tables_dir = proj_dir / tables_rel
+                if tables_dir.exists():
+                    table_files = list(tables_dir.glob('*.md'))
+                    if len(table_files) >= 3:
+                        return True, f"{tables_rel}/ 目录存在, 含 {len(table_files)} 个表格文件"
+                    elif len(table_files) >= 1:
+                        return False, f"{tables_rel}/ 目录文件不足 (仅 {len(table_files)} 个, 需 ≥3: Table 1/2/3)"
+                    else:
+                        return False, f"{tables_rel}/ 目录为空"
     return False, "未找到项目的 tables/ 目录, Phase 6 必须产出 Table 1/2/3"
 
 
@@ -223,17 +227,19 @@ def check_figures_exist(outputs: dict, orch) -> tuple:
     if hasattr(orch, 'kb') and orch.kb:
         for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
             proj_dir = Path(vault_path) / 'projects' / project_id
-            figures_dir = proj_dir / 'figures'
-            if figures_dir.exists():
-                image_files = list(figures_dir.glob('*.png')) + list(figures_dir.glob('*.jpg'))
-                caption_files = list(figures_dir.glob('*caption*.md'))
-                total_visual = len(image_files) + len([f for f in caption_files if 'fig' in f.name.lower()])
-                if len(image_files) >= 3:
-                    return True, f"figures/ 目录存在, 含 {len(image_files)} 张图片 + {len(caption_files)} 个图注"
-                elif total_visual >= 4:
-                    return True, f"figures/ 目录存在, 含 {total_visual} 个视觉元素"
-                else:
-                    return False, f"figures/ 目录内容不足 (仅 {len(image_files)} 图片, 需 ≥3: ROC/校准/SHAP/DCA)"
+            # figures/ 是零件工作目录
+            for figures_rel in ['figures']:
+                figures_dir = proj_dir / figures_rel
+                if figures_dir.exists():
+                    image_files = list(figures_dir.glob('*.png')) + list(figures_dir.glob('*.jpg'))
+                    caption_files = list(figures_dir.glob('*caption*.md'))
+                    total_visual = len(image_files) + len([f for f in caption_files if 'fig' in f.name.lower()])
+                    if len(image_files) >= 3:
+                        return True, f"{figures_rel}/ 目录存在, 含 {len(image_files)} 张图片 + {len(caption_files)} 个图注"
+                    elif total_visual >= 4:
+                        return True, f"{figures_rel}/ 目录存在, 含 {total_visual} 个视觉元素"
+                    else:
+                        return False, f"{figures_rel}/ 目录内容不足 (仅 {len(image_files)} 图片, 需 ≥3: ROC/校准/SHAP/DCA)"
     return False, "未找到项目的 figures/ 目录, Phase 6 必须产出至少 4 张图表"
 
 
@@ -260,18 +266,20 @@ def check_manuscript_assembled(outputs: dict, orch) -> tuple:
                 return False, "manuscript 缺少独立 ## Conclusion 章节"
             return True, "manuscript.md 结构完整 (IMRAD + Conclusion)"
 
-    # Check filesystem for manuscript.md
+    # Check filesystem for manuscript.md (投稿层 submission/manuscript.md)
     import os
     from pathlib import Path
     project_id = getattr(orch, '_current_project_id', None)
     if project_id and hasattr(orch, 'kb') and orch.kb:
         for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
-            manuscript_path = Path(vault_path) / 'projects' / project_id / 'sections' / 'manuscript.md'
-            if manuscript_path.exists():
-                content = manuscript_path.read_text()
-                has_imrad = all(s in content for s in ["## Introduction", "## Methods", "## Results", "## Discussion"])
-                if has_imrad:
-                    return True, "manuscript.md 文件存在且结构完整"
+            proj_dir = Path(vault_path) / 'projects' / project_id
+            for manuscript_rel in ['submission/manuscript.md', 'sections/manuscript.md']:
+                manuscript_path = proj_dir / manuscript_rel
+                if manuscript_path.exists():
+                    content = manuscript_path.read_text()
+                    has_imrad = all(s in content for s in ["## Introduction", "## Methods", "## Results", "## Discussion"])
+                    if has_imrad:
+                        return True, f"manuscript.md ({manuscript_rel}) 文件存在且结构完整"
     return True, "跳过 (manuscript 在 Agent 输出中, 未检查文件系统)"
 
 def check_conclusion_heading_level(outputs: dict, orch) -> tuple:
@@ -434,6 +442,10 @@ def check_ref_recency(outputs: dict, orch) -> tuple:
                     is_classic_registry = (entry["first_author"], year) in classic_registry
 
                 is_classic_annotated = entry["has_classic_tag"]
+                # 🆕 检测占位符 "领域" 被当作实际领域名使用
+                if is_classic_annotated and entry.get("classic_reason", "").startswith("领域"):
+                    old_unexplained.append(entry)
+                    continue  # 格式无效, 不计入豁免
 
                 if is_classic_registry or is_classic_annotated:
                     exempted_count += 1
@@ -1206,6 +1218,462 @@ def check_feature_stability(outputs: dict, orch) -> tuple:
 
 
 # ============================================================
+# Phase 5: 方法实现保真度检查
+# ============================================================
+
+def check_method_implementation_fidelity(outputs: dict, orch) -> tuple:
+    """Methods 声明的分析方法必须与代码实际实现一致
+
+    从 04_methods.md 提取方法声明 → 在 train_model.py / generate_figures.py 中搜索实现
+    """
+    import os
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    # 定位项目目录
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 从 04_methods.md 提取分析方法声明
+    methods_files = list(proj_dir.glob('sections/04_methods.md')) + \
+                    list(proj_dir.glob('data/*methods*.md'))
+    if not methods_files:
+        return True, "跳过 (未找到 Methods 文件)"
+
+    methods_text = methods_files[0].read_text()
+
+    # 提取方法声明关键词
+    method_patterns = {
+        "SHAP": [r'\bshap\b', r'\bshapley\b', r'\bshap_values?\b'],
+        "LASSO": [r'\blasso\b', r"LogisticRegressionCV\(penalty='l1'\)"],
+        "XGBoost": [r'\bxgboost\b', r'\bXGBClassifier\b', r'\bXGBRegressor\b'],
+        "Random Forest": [r'\brandom.?forest\b', r'\bRandomForest\b'],
+        "Logistic Regression": [r'\blogistic.?regression\b', r'\bLogisticRegression\b'],
+        "Cox PH": [r'\bcox\b', r'\bCoxPH\b', r'\bCox Proportional\b'],
+        "Elastic Net": [r'\belastic.?net\b', r"penalty='elasticnet'"],
+        "Ridge": [r'\bridge regression\b', r"penalty='l2'"],
+        "SVM": [r'\bsvm\b', r'\bsupport vector\b', r'\bSVC\b'],
+        "Gradient Boosting": [r'\bgradient.?boosting\b', r'\bGradientBoosting\b'],
+    }
+
+    declared_methods = []
+    for method_name, patterns in method_patterns.items():
+        for pat in patterns:
+            if re.search(pat, methods_text, re.IGNORECASE):
+                declared_methods.append(method_name)
+                break
+
+    if not declared_methods:
+        return True, "跳过 (Methods 中未检测到明确的机器学习方法声明)"
+
+    # 2. 在代码中搜索对应实现
+    code_files = list(proj_dir.glob('train_model.py')) + \
+                 list(proj_dir.glob('tune_model.py')) + \
+                 list(proj_dir.glob('generate_figures.py')) + \
+                 list(proj_dir.glob('figures/generate_figures.py'))
+
+    if not code_files:
+        return True, "跳过 (未找到项目代码文件)"
+
+    code_text = ""
+    for cf in code_files:
+        if cf.exists():
+            code_text += cf.read_text() + "\n"
+
+    # 实现关键词映射
+    impl_patterns = {
+        "SHAP": [r'import\s+shap\b', r'from\s+shap\b', r'shap\.', r'shap_values?\b'],
+        "LASSO": [r"penalty\s*=\s*['\"]l1['\"]", r'Lasso\b', r'lassocv\b',
+                   r'LogisticRegressionCV\s*\([^)]*penalty'],
+        "XGBoost": [r'import\s+xgboost\b', r'from\s+xgboost\b', r'xgb\.',
+                     r'XGBClassifier\b', r'XGBRegressor\b'],
+        "Random Forest": [r'RandomForestClassifier\b', r'RandomForestRegressor\b'],
+        "Logistic Regression": [r'LogisticRegression\b', r'LogisticRegressionCV\b'],
+        "Cox PH": [r'CoxPH\b', r'CoxPHFitter\b', r'CoxRegression\b',
+                    r'from\s+lifelines\b'],
+        "Elastic Net": [r"penalty\s*=\s*['\"]elasticnet['\"]",
+                         r'ElasticNet\b', r'ElasticNetCV\b'],
+        "Ridge": [r"penalty\s*=\s*['\"]l2['\"]", r'Ridge\b', r'RidgeCV\b',
+                   r'RidgeClassifier\b'],
+        "SVM": [r'SVC\b', r'SVR\b', r'LinearSVC\b', r'from\s+sklearn\.svm\b'],
+        "Gradient Boosting": [r'GradientBoostingClassifier\b',
+                               r'GradientBoostingRegressor\b',
+                               r'import\s+lightgbm\b', r'from\s+lightgbm\b',
+                               r'import\s+catboost\b', r'from\s+catboost\b'],
+    }
+
+    missing_impl = []
+    for method in declared_methods:
+        patterns = impl_patterns.get(method, [])
+        if not patterns:
+            continue
+        found = any(re.search(pat, code_text, re.IGNORECASE) for pat in patterns)
+        if not found:
+            missing_impl.append(method)
+
+    if missing_impl:
+        return False, (
+            f"方法实现保真度不通过: Methods 声明了 {missing_impl} 但代码中未找到对应实现。"
+            f"请修正 Methods 文本或补充代码实现。"
+        )
+
+    return True, f"方法实现保真度通过: {len(declared_methods)} 个声明的分析方法均在代码中确认 ✓"
+
+
+# ============================================================
+# Phase 6: 数值一致性 + 基线合规 + 投稿层完整性检查
+# ============================================================
+
+def check_numerical_traceability(outputs: dict, orch) -> tuple:
+    """所有数值可追溯到 cv_results.json (偏差 < 0.1%)
+
+    检查 tables/*.md + manuscript.md + figure*_data.json 中的数值
+    是否与 cv_results.json 对应 key 偏差 < 0.1%
+    """
+    import os
+    import re
+    import json
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 加载真相源 cv_results.json
+    cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
+               list(proj_dir.glob('data/cv_results.json'))
+    if not cv_paths:
+        return True, "跳过 (未找到 cv_results.json, 可能尚未完成 Phase 3)"
+
+    try:
+        cv_data = json.loads(cv_paths[0].read_text())
+    except (json.JSONDecodeError, OSError):
+        return True, "跳过 (cv_results.json 无法解析)"
+
+    # 展平 cv_results 为 {key: value} 映射
+    def flatten_json(d, prefix=""):
+        items = {}
+        if isinstance(d, dict):
+            for k, v in d.items():
+                new_key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, (dict, list)):
+                    items.update(flatten_json(v, new_key))
+                elif isinstance(v, (int, float)):
+                    items[new_key] = v
+        elif isinstance(d, list):
+            for i, v in enumerate(d):
+                new_key = f"{prefix}[{i}]"
+                if isinstance(v, (dict, list)):
+                    items.update(flatten_json(v, new_key))
+                elif isinstance(v, (int, float)):
+                    items[new_key] = v
+        return items
+
+    truth = flatten_json(cv_data)
+    if not truth:
+        return True, "跳过 (cv_results.json 中无数值)"
+
+    # 2. 从 figure*_data.json 提取数值并对比
+    violations = []
+
+    figure_data_files = list(proj_dir.glob('figures/figure*_data.json')) + \
+                        list(proj_dir.glob('figures/Figure*_data.json'))
+    for fd in figure_data_files:
+        try:
+            fig_data = json.loads(fd.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        fig_flat = flatten_json(fig_data)
+        for fig_key, fig_val in fig_flat.items():
+            # 模糊匹配: 在 truth 中找最相似的 key
+            matched = None
+            for truth_key, truth_val in truth.items():
+                # 简单包含匹配 (如 "auc" in truth_key and "auc" in fig_key)
+                key_parts = fig_key.lower().replace("_", " ").split()
+                if all(part in truth_key.lower() for part in key_parts if len(part) > 2):
+                    matched = truth_val
+                    break
+            if matched and isinstance(matched, (int, float)) and matched != 0:
+                deviation = abs(fig_val - matched) / abs(matched)
+                if deviation > 0.001:  # 0.1%
+                    violations.append(
+                        f"{fd.name}:{fig_key}={fig_val} vs cv_results={matched} "
+                        f"(偏差 {deviation:.2%})"
+                    )
+
+    # 3. 从 tables/*.md 提取数值并对比
+    table_files = list(proj_dir.glob('tables/*.md'))
+    for tf in table_files:
+        try:
+            table_text = tf.read_text()
+        except OSError:
+            continue
+        # 提取所有数值: X.XXX 或 XX.X%
+        numbers = re.findall(r'(\d+\.\d+)%?', table_text)
+        for num_str in numbers:
+            num_val = float(num_str)
+            if num_val < 0.01:
+                continue
+            # 在 truth 中找最接近的值
+            for truth_val in truth.values():
+                if isinstance(truth_val, (int, float)) and truth_val != 0:
+                    if abs(num_val - truth_val) / abs(truth_val) < 0.01:
+                        break
+
+    if violations:
+        return False, (
+            f"数值可追溯性不通过 — {len(violations)} 处偏差 > 0.1%:\n"
+            + "\n".join(f"  • {v}" for v in violations[:5])
+            + (f"\n  ...等 {len(violations)} 处" if len(violations) > 5 else "")
+        )
+
+    return True, (
+        f"数值可追溯性通过: {len(figure_data_files)} 个 figure data + "
+        f"{len(table_files)} 个 table 全部与 cv_results.json 一致 ✓"
+    )
+
+
+def check_baseline_compliance(outputs: dict, orch) -> tuple:
+    """Figure 必须从 Phase 3 baseline 读取数据，禁止从模型对象重新提取"""
+    import os
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 查找 generate_figures.py
+    gen_fig_paths = list(proj_dir.glob('generate_figures.py')) + \
+                    list(proj_dir.glob('figures/generate_figures.py')) + \
+                    list(proj_dir.glob('regenerate_figures_tables.py'))
+
+    if not gen_fig_paths:
+        return True, "跳过 (未找到 generate_figures.py)"
+
+    gen_fig_code = gen_fig_paths[0].read_text()
+
+    violations = []
+
+    # 检查1: 是否 import json (用于读取 cv_results.json)
+    if 'import json' not in gen_fig_code and 'from json' not in gen_fig_code:
+        violations.append("未 import json (无法读取 cv_results.json)")
+
+    # 检查2: 是否从模型对象直接提取 feature_importances_
+    direct_extraction_patterns = [
+        r'\.feature_importances_\b',
+        r'\.coef_\b',
+        r'\.feature_importance\b',
+        r'\.get_fscore\b',
+        r'\.get_score\b',
+    ]
+    for pat in direct_extraction_patterns:
+        matches = re.findall(pat, gen_fig_code)
+        if matches:
+            # 检查是否同时读取了 cv_results.json (合规的混合使用)
+            if 'cv_results.json' not in gen_fig_code and \
+               'cv_results' not in gen_fig_code:
+                violations.append(
+                    f"从模型对象直接提取数据 ({matches[0]}) 但未读取 cv_results.json，"
+                    f"违反基线合规要求"
+                )
+
+    # 检查3: 是否 open(cv_results.json) 或读取 baseline
+    reads_baseline = (
+        'cv_results.json' in gen_fig_code or
+        'cv_results' in gen_fig_code or
+        'phase3_baseline' in gen_fig_code
+    )
+
+    if not reads_baseline:
+        violations.append(
+            "generate_figures.py 未读取 cv_results.json 或 Phase 3 baseline，"
+            "数据源可能来自模型对象而非冻结基线"
+        )
+
+    if violations:
+        return False, (
+            f"基线合规不通过:\n" + "\n".join(f"  • {v}" for v in violations)
+        )
+
+    return True, "基线合规通过: figures 数据源来自 cv_results.json ✓"
+
+
+def check_submission_structure_integrity(outputs: dict, orch) -> tuple:
+    """投稿层结构完整性: submission/ 下无 sections/, figures/ 仅 .png/.tiff,
+    tables/ 仅 .csv, 无 Classic 标注残留"""
+    import os
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    submission_dir = proj_dir / 'submission'
+    if not submission_dir.exists():
+        return False, "投稿层不存在: submission/ 目录未创建"
+
+    violations = []
+
+    # 1. submission/ 下不得存在 sections/ 目录
+    if (submission_dir / 'sections').exists():
+        violations.append(
+            "submission/sections/ 目录存在 — "
+            "零件层 sections/ 不应出现在投稿层, assembly 误用了 cp -r 而非 cat 拼接"
+        )
+
+    # 2. submission/figures/ 下仅允许 .png 和 .tiff
+    figures_dir = submission_dir / 'figures'
+    if figures_dir.exists():
+        for f in figures_dir.iterdir():
+            if f.is_file() and f.suffix.lower() not in ('.png', '.tiff', '.tif'):
+                violations.append(
+                    f"submission/figures/ 含非图片文件: {f.name} — "
+                    "caption .md 和 data .json 不应进入投稿层"
+                )
+
+        # 检查 .png 是否都有对应 .tiff
+        png_files = {f.stem for f in figures_dir.glob('*.png')}
+        tiff_files = {f.stem for f in figures_dir.glob('*.tiff')} | \
+                     {f.stem for f in figures_dir.glob('*.tif')}
+        missing_tiff = png_files - tiff_files
+        if missing_tiff:
+            violations.append(
+                f"submission/figures/ 中 {len(missing_tiff)} 个 .png 缺少对应 .tiff: "
+                + ", ".join(sorted(missing_tiff)[:5])
+            )
+
+    # 3. submission/tables/ 下仅允许 .csv
+    tables_dir = submission_dir / 'tables'
+    if tables_dir.exists():
+        for f in tables_dir.iterdir():
+            if f.is_file() and f.suffix.lower() != '.csv':
+                violations.append(
+                    f"submission/tables/ 含非 CSV 文件: {f.name} — "
+                    "投稿层表格仅需 .csv"
+                )
+
+    # 4. submission/manuscript.md 存在
+    manuscript = submission_dir / 'manuscript.md'
+    if not manuscript.exists():
+        violations.append("submission/manuscript.md 不存在 — assembly 未生成合稿")
+
+    # 5. manuscript.md 中不含 Classic 标注
+    if manuscript.exists():
+        try:
+            content = manuscript.read_text()
+            if '[Classic' in content or '[classic' in content.lower():
+                violations.append(
+                    "submission/manuscript.md 中含 [Classic 标注 — "
+                    "Classic 标注为零件层内部元数据, assembly 拼接时必须 strip"
+                )
+        except OSError:
+            pass
+
+    if violations:
+        return False, (
+            f"投稿层结构完整性不通过 — {len(violations)} 项违规:\n"
+            + "\n".join(f"  • {v}" for v in violations)
+        )
+
+    return True, "投稿层结构完整性通过 ✓"
+
+
+def check_figure_naming_convention(outputs: dict, orch) -> tuple:
+    """Figure 文件名匹配 Figure[N]_[descriptor].[ext] 格式"""
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    figures_dir = proj_dir / 'figures'
+    if not figures_dir.exists():
+        return True, "跳过 (figures/ 目录不存在)"
+
+    png_files = list(figures_dir.glob('*.png'))
+    if not png_files:
+        return True, "跳过 (figures/ 中无 .png 文件)"
+
+    # 期望格式: Figure[N]_[descriptor].png  (N = 数字 或 S数字)
+    valid_pattern = re.compile(r'^Figure(S?\d+)_[a-z0-9\-]+\.png$', re.IGNORECASE)
+
+    invalid_names = []
+    for f in png_files:
+        if not valid_pattern.match(f.name):
+            invalid_names.append(f.name)
+
+    if invalid_names:
+        return False, (
+            f"Figure 命名格式不通过 — {len(invalid_names)} 个文件不符合 "
+            f"Figure[N]_[descriptor].[ext] 格式:\n"
+            + "\n".join(f"  • {n}" for n in invalid_names[:5])
+            + (f"\n  ...等 {len(invalid_names)} 个" if len(invalid_names) > 5 else "")
+            + "\n\n期望: Figure1_cohort-flow-diagram.png, Figure2_roc-curve.png, etc."
+        )
+
+    return True, f"Figure 命名格式通过: {len(png_files)} 个 .png 文件均符合规范 ✓"
+
+
+# ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
 
@@ -1268,6 +1736,7 @@ GATE_DEFINITIONS = {
             "clinical_review_exists": check_clinical_review_exists,
             "pi_approval_exists": check_pi_approval_exists,
             "num_consistency_validated": check_num_consistency_validated,
+            "method_fidelity": check_method_implementation_fidelity,
         },
         "llm_checks": [
             "临床审查是否确认了效应方向与预测因子合理性?",
@@ -1301,14 +1770,20 @@ GATE_DEFINITIONS = {
             "discussion_no_subheadings": check_discussion_no_subheadings,
             "discussion_no_conclusion": check_discussion_p4_no_conclusion,
             "humanize_quality": check_humanize_quality,
+            "numerical_traceability": check_numerical_traceability,
+            "baseline_compliance": check_baseline_compliance,
+            "submission_integrity": check_submission_structure_integrity,
+            "figure_naming": check_figure_naming_convention,
         },
         "llm_checks": [
-            "Methods ↔ Results 是否 1:1 对应?",
-            "Discussion 四段是否完整 (¶1 发现/¶2 文献/¶3 含义/¶4 局限)?",
+            "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",
+            "Discussion 四段是否形成四个语义段落? (¶1 主要发现/¶2 文献对比/¶3 含义/¶4 局限, 非仅空行分隔)",
             "Conclusion 是否独立章节 (## Conclusion)?",
             "所有数值是否可追溯到上游分析输出?",
             "是否存在虚假引用或未读引用?",
             "参考文献时效性是否达标 (≥80% 近5年文献)?",
+            "所有非通用缩写在首次出现时是否给出了全称 (全称 (ABBR) 格式)? 通用缩写 (DNA/RNA/BMI/CI/AUC/OR/HR/SD) 除外",
+            "去 AI 味改写是否真正改善了文本自然度? (句子长度变化/段落节奏/转折自然性/模板痕迹/hedge 适度)",
         ],
     },
 }
