@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--model", "-m", default=None, help="LLM 模型名 (默认: claude-sonnet-4-6)")
     parser.add_argument("--provider", "-p", default=None, help="LLM 提供商 (anthropic/deepseek/openai)")
     parser.add_argument("--workflow", "-w", default="auto",
-                        choices=["auto", "new_project", "literature", "paper", "quick", "status"],
+                        choices=["auto", "new_project", "literature", "paper", "quick", "status", "kb_enrich"],
                         help="工作流类型 (默认: auto 自动判断)")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
     parser.add_argument("--dry-run", action="store_true", help="仅显示编排计划, 不实际调用 LLM")
@@ -58,6 +58,9 @@ def main():
     parser.add_argument("--analyze-days", type=int, default=90, help="运行报告分析天数 (默认 90)")
     parser.add_argument("--analyze-output", default=None, help="运行报告输出文件 (默认 stdout)")
     parser.add_argument("--analyze-json", action="store_true", help="运行报告以 JSON 格式输出")
+    parser.add_argument("--division", "-d", default="all",
+                        choices=["all", "geriatrics", "urology"],
+                        help="限定事业部 (默认: all, 用于 kb_enrich 等工作流)")
 
     args = parser.parse_args()
 
@@ -85,11 +88,18 @@ def main():
                 print(report)
         return
 
-    # 检查 API Key
-    if not os.getenv("ANTHROPIC_API_KEY") and not args.dry_run:
-        print("⚠️  未设置 ANTHROPIC_API_KEY 环境变量")
-        print("   请运行: export ANTHROPIC_API_KEY='your-key-here'")
-        print("   或使用 --dry-run 查看编排计划而不实际调用 LLM\n")
+    # 检查 API Key (根据 provider 检查对应的 key)
+    provider = os.getenv("LLM_PROVIDER", "anthropic")
+    key_env_map = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "openai": "OPENAI_API_KEY",
+    }
+    key_var = key_env_map.get(provider, "ANTHROPIC_API_KEY")
+    if not os.getenv(key_var) and not args.dry_run:
+        print(f"⚠️  未设置 {key_var} 环境变量")
+        print(f"   请运行: export {key_var}='your-key-here'")
+        print(f"   或使用 --dry-run 查看编排计划而不实际调用 LLM\n")
 
     # 加载配置
     overrides = {"verbose": args.verbose}
@@ -120,6 +130,15 @@ def main():
     if not avail:
         print(f"  (无数据源已配置路径)")
     print()
+
+    # kb_enrich 工作流: 直接路由, 无需 LLM 意图分类, 也无需用户输入
+    if args.workflow == "kb_enrich":
+        result = orchestrator.run_kb_enrich(
+            divisions=[args.division] if args.division != "all" else None)
+        print("\n" + "=" * 60)
+        print(result)
+        print("=" * 60)
+        return
 
     # 获取用户请求
     if args.request:

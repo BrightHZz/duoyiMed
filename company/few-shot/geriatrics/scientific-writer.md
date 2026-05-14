@@ -166,3 +166,97 @@ discrimination in community-dwelling Chinese older adults. Functional
 performance emerged as the dominant predictor, supporting the central 
 role of physical assessment in frailty risk stratification.
 ```
+
+---
+
+## Example 3: 从 SAP 和上游数据撰写 Methods
+
+### Input
+
+```
+任务: 基于以下上游产出, 撰写 Methods 章节
+
+上游 SAP (biostatistician 产出, 内部工作文档):
+### 1. 研究设计概览
+- 设计类型: 前瞻性队列
+- 数据来源: CHARLS 2011-2018
+### 2. 样本量与功效
+- 目标功效: 0.80, 最终 N=5,432
+### 3. 基线特征描述
+- 正态性检验: Shapiro-Wilk
+### 4. 主要分析
+- 模型: XGBoost, LASSO, Logistic Regression
+- 缺失处理: MICE (m=10, 假设 MAR)
+### 5. 模型评估
+- AUC-ROC, Brier Score, Calibration
+### 6. 亚组分析
+- 年龄组, 性别, 交互检验
+### 7. 敏感性分析
+- CCA, Frailty Index 替代结局, 竞争风险
+### 8. 软件
+- Python 3.12, scikit-learn 1.5
+
+⚠️ 注意: 上游 SAP 有 8 个 ### 标题, 但这是内部工作文档结构,
+不代表论文 Methods 的章节组织。
+论文 Methods 应只有 5 个 ### 子标题。
+```
+
+### Reasoning (Chain of Thought)
+
+```
+1. SAP 的 8 个 ### 标题是工作文档结构, 不能直接映射为论文 Methods 子标题
+2. 论文 Methods 标准 5 个子标题:
+   - Study Design and Setting ← 合并 SAP §1 (设计类型+数据来源+报告指南)
+   - Study Population ← 合并 SAP §2 (纳入排除+样本量+流程图)
+   - Outcomes and Predictors ← 结局定义+预测因子+CHARLS 变量名
+   - Statistical Analysis ← 合并 SAP §3/4/5/8 (正态性+缺失+模型+评估+软件)
+   - Sensitivity Analysis ← 对应 SAP §7
+3. SAP §6 (亚组) 属于 Statistical Analysis 的二级内容, 不独立成节
+4. 不写 "### 1. 研究设计概览" / "### 2. 样本量" / "### 3. 基线特征" 等 SAP 标题
+```
+
+### Output
+
+```markdown
+## Methods
+
+### Study Design and Setting
+This was a prospective cohort study using data from the China Health and 
+Retirement Longitudinal Study (CHARLS) waves 2011–2018. CHARLS is a nationally 
+representative longitudinal survey of Chinese adults aged ≥45 years. The study 
+followed the TRIPOD+AI reporting guideline for prediction model development.
+
+### Study Population
+We included participants aged ≥60 years at baseline (2011 wave) who were 
+non-frail (Fried frailty phenotype score <3). Exclusion criteria were: 
+severe cognitive impairment (MMSE <18), missing frailty assessment at baseline, 
+and loss to follow-up at the 2013 wave. After applying these criteria, 
+5,432 participants were included in the primary analysis (Figure 1).
+
+### Outcomes and Predictors
+The primary outcome was 2-year frailty worsening, defined as an increase in 
+Fried frailty phenotype score between the 2011 and 2013 waves. Candidate 
+predictors included demographics (age, sex), functional measures (gait speed 
+[CHARLS variable da049], grip strength), clinical variables (number of chronic 
+conditions, depressive symptoms [CES-D]), and laboratory measures (serum albumin).
+
+### Statistical Analysis
+Normality of continuous variables was assessed using the Shapiro-Wilk test. 
+Missing data (8.2% of observations) were handled using multiple imputation by 
+chained equations (MICE) with m=10 imputations under the missing-at-random 
+(MAR) assumption. We trained three models: XGBoost, LASSO logistic regression, 
+and a baseline age-and-sex logistic regression model. Feature selection was 
+performed using LASSO with 5-fold cross-validation. Hyperparameters were tuned 
+via Bayesian optimization within nested cross-validation. Model performance 
+was assessed via 5-fold cross-validation, reporting AUC-ROC (with 95% CI 
+via DeLong's method), Brier score, and calibration slope. Subgroup analyses 
+were conducted by age group (60–69, 70–79, ≥80) and sex, with interaction 
+terms tested for significance. All analyses were performed using Python 3.12 
+with scikit-learn 1.5 and XGBoost 2.0.
+
+### Sensitivity Analysis
+We conducted three pre-specified sensitivity analyses: (1) complete-case 
+analysis to assess the impact of missing data assumptions; (2) using the 
+Frailty Index as an alternative outcome definition; and (3) Fine-Gray 
+competing risk regression treating death as a competing event.
+```

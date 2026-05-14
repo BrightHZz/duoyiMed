@@ -488,6 +488,100 @@ artifacts:
 - 特征工程文档 (to 全员复用)
 - Results 部分图表 (to `scientific-writer`)
 
+## Figure 生成规范 — 确定性数据源
+
+**核心原则**: 凡是能从数据文件计算的东西，**禁止 LLM 推测或编造**。每个 Figure 的数字必须从指定的结构化文件中读取。
+
+### 数据源对照表
+
+| Figure | 内容 | 数据源文件 | 读取方式 |
+|--------|------|-----------|---------|
+| Figure 1 | 队列流程图 | `outputs/cohort_attrition.json` | `json.load()` 读取 `steps[]` 数组，每步的 `excluded`/`remaining` |
+| Figure 2 | ROC 曲线 | `models/cv_results.json` | 读取 `models.{name}.auc` 及各 fold 的 FPR/TPR |
+| Figure 3 | 校准曲线 | `models/cv_results.json` | 读取 `models.{name}.calibration_slope`/`calibration_intercept` 及各 fold 的 predicted/observed |
+| Figure 4 | 特征重要性 | `models/cv_results.json` | 读取 `models.{name}.feature_importance` |
+| Figure S1 | 决策曲线 | `models/cv_results.json` | 读取 `models.{name}.dca` 或从预测概率计算 |
+
+### Figure 1 队列流程图 — 强制规则
+
+**🚫 禁止推测筛选数字。** Figure 1 的每个筛选步骤的 N 必须从 `outputs/cohort_attrition.json` 读取。如果该文件不存在，报错退出（`raise FileNotFoundError`），不得用推测值填充。
+
+**🔧 必须使用 graphviz 绘制**，禁止使用 matplotlib 手动画流程图。graphviz 的自动布局引擎生成的流程图线条整齐、对齐专业，matplotlib 手动画流程图效果丑陋不专业。
+
+`cohort_attrition.json` 格式:
+```json
+{
+  "source": "CHARLS 2011-2018",
+  "baseline_n": 7523,
+  "steps": [
+    {"step": 1, "criterion": "Age ≥60", "excluded": 1203, "remaining": 6320},
+    {"step": 2, "criterion": "Non-frail", "excluded": 576, "remaining": 5744},
+    ...
+  ],
+  "final_n": 5432,
+  "event_n": 1428
+}
+```
+
+`generate_figures.py` 中 Figure 1 的代码模板 (graphviz):
+```python
+import json
+from graphviz import Digraph
+
+with open('outputs/cohort_attrition.json') as f:
+    cohort = json.load(f)
+
+dot = Digraph(
+    name='cohort_flow',
+    node_attr={'shape': 'box', 'style': 'rounded', 'fontname': 'Arial'},
+    edge_attr={'fontname': 'Arial', 'fontsize': '9'},
+)
+dot.attr(rankdir='TB', splines='ortho')
+
+# 基线
+dot.node('baseline', f"Baseline participants\n(n = {cohort['baseline_n']:,})")
+
+prev_node = 'baseline'
+for s in cohort['steps']:
+    step_id = f"step{s['step']}"
+    # 排除框 (右侧)
+    dot.node(f"excl{s['step']}", f"Excluded (n = {s['excluded']:,})\n{s['criterion']}",
+             shape='box', style='filled', fillcolor='#f0f0f0')
+    # 剩余框 (下方)
+    dot.node(step_id, f"n = {s['remaining']:,}")
+    
+    dot.edge(prev_node, f"excl{s['step']}", label=f"Excluded\n(n = {s['excluded']:,})")
+    dot.edge(prev_node, step_id, label=f"Remaining\n(n = {s['remaining']:,})")
+    prev_node = step_id
+
+# 最终分析人群
+dot.node('final', f"Final analysis sample\n(n = {cohort['final_n']:,})\nEvents: {cohort['event_n']:,} ({cohort.get('event_rate', 0):.1%})",
+         shape='box', style='filled', fillcolor='#e8f5e9')
+dot.edge(prev_node, 'final')
+
+dot.render('figures/Figure1_cohort-flow-diagram', format='png', dpi=300, cleanup=False)
+dot.render('figures/Figure1_cohort-flow-diagram', format='tiff', dpi=300, cleanup=False)
+```
+
+> **关键点**: graphviz 自动处理节点定位和对齐，matplotlib 流程图需要手动计算每个框的坐标，视觉效果差。Figures 2-4 (ROC/校准/特征重要性) 仍用 matplotlib/seaborn，只有流程图必须用 graphviz。
+
+### Figure data.json — 强制产出
+
+**每个 Figure 必须同时产出对应的 `_data.json` 文件**，用于 Gate 6 数值追踪。这是**强制要求**，不生成 data.json 将导致 Gate 6 FAIL。
+
+| Figure | data.json 文件 | 必须包含的 key |
+|--------|---------------|---------------|
+| Figure 1 | `Figure1_cohort-flow-diagram_data.json` | `baseline_n`, `steps[].excluded`, `steps[].remaining`, `final_n`, `event_n` |
+| Figure 2 | `Figure2_roc-curve_data.json` | `auc`, `auc_ci_low`, `auc_ci_high` — 值与 cv_results.json 一致 |
+| Figure 3 | `Figure3_calibration-plot_data.json` | `brier`, `calibration_slope`, `calibration_intercept` — 值与 cv_results.json 一致 |
+| Figure 4 | `Figure4_feature-importance_data.json` | `feature_importance` — 值与 cv_results.json 一致 |
+
+data.json 的值必须从 cv_results.json 或 cohort_attrition.json **直接读取后写入**，不是从模型对象（`.feature_importances_`）重新提取。
+
+### Phase 3 cohort_attrition.json 产出
+
+在 Phase 3 的数据预处理/模型训练脚本中，**在数据清洗完成后立即输出 `cohort_attrition.json`**。记录每个筛选步骤的排除数和剩余数。这是数据工程师和 ML 工程师的**强制交付件**。
+
 ## 约束
 
 - 你一定先做 Logistic Regression / Cox PH baseline，再做复杂模型

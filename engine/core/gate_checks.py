@@ -120,6 +120,147 @@ def check_n_jobs_safe(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 ml-engineer 输出)"
 
 
+# 所有分类模型的必备评估指标 — Phase 3 输出标准
+_REQUIRED_EVAL_METRICS = {
+    "auc": ["auc", "auc_roc", "mean_auc", "auc_mean", "mean"],
+    "auc_ci": ["ci_low", "ci_high", "auc_ci"],
+    "pr_auc": ["pr_auc", "pr_auc_score", "average_precision"],
+    "brier": ["brier", "brier_score"],
+    "calibration_slope": ["calibration_slope", "calib_slope"],
+    "calibration_intercept": ["calibration_intercept", "calib_intercept"],
+    "sensitivity": ["sensitivity", "sens", "tpr", "recall"],
+    "specificity": ["specificity", "spec", "tnr"],
+    "ppv": ["ppv", "precision", "positive_predictive_value"],
+    "npv": ["npv", "negative_predictive_value"],
+    "f1": ["f1", "f1_score"],
+}
+
+# 数据不平衡时额外要求
+_REQUIRED_EVAL_METRICS_IMBALANCED = {
+    "pr_auc": ["pr_auc", "pr_auc_score", "average_precision"],
+}
+
+
+def _flatten_model_metrics(cv_data: dict) -> dict[str, dict]:
+    """从 cv_results.json 提取每个模型的指标字典 {model_id: {flat_metric_name: value}}
+
+    处理嵌套结构: {auc: {mean: 0.84, ci_low:..., ci_high:...}} → mean_auc, ci_low, ci_high
+    """
+    models = {}
+    candidates = cv_data.get("models", cv_data)
+
+    for model_id, metrics in candidates.items():
+        if not isinstance(metrics, dict):
+            continue
+
+        flat = {}
+        for k, v in metrics.items():
+            k_lower = str(k).lower()
+            if isinstance(v, dict):
+                # 嵌套: auc: {mean: 0.84, ci_low: 0.79, ci_high: 0.89}
+                for sub_k, sub_v in v.items():
+                    sub_k_lower = str(sub_k).lower()
+                    # 保留原始 key 作为前缀: auc_mean, auc_ci_low, auc_ci_high
+                    flat[f"{k_lower}_{sub_k_lower}"] = sub_v
+                    # 也保留无前缀版本: mean, ci_low, ci_high
+                    flat[sub_k_lower] = sub_v
+            elif isinstance(v, (int, float)):
+                flat[k_lower] = v
+            elif isinstance(v, list) and all(isinstance(x, (int, float)) for x in v):
+                flat[k_lower] = v  # e.g. cv_fold_aucs: [0.83, 0.85, ...]
+
+        # 判定是否是模型指标 (包含至少一个评估相关 key)
+        eval_keys = {"auc", "brier", "f1", "accuracy", "sensitivity", "specificity",
+                      "precision", "recall", "calib", "pr_auc", "ci_low", "ci_high"}
+        has_eval = any(
+            any(ek in str(k).lower() for ek in eval_keys)
+            for k in flat.keys()
+        )
+        if has_eval:
+            models[model_id] = flat
+
+    return models
+
+
+def check_all_models_evaluated_completely(outputs: dict, orch) -> tuple:
+    """所有模型的评估指标必须完整 — 主模型和 baseline 必须输出统一的必备指标集
+
+    钱学森总体设计部: 接口格式标准化。任一模型缺 PR-AUC/Brier/Calib Slope → Gate 3 FAIL。
+
+    起因: 2026-05-13 发现 train_model.py 只为主模型算全量指标, baseline 模型仅输出 AUC,
+    导致 Table 2 中非主模型缺失关键指标。
+    """
+    import json
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        # 也尝试从 agent output 中检测
+        for agent_id, output in outputs.items():
+            if "ml-engineer" in agent_id.lower():
+                if "auc" in output.lower() and "brier" not in output.lower():
+                    return False, (
+                        "ml-engineer 输出中检测到 AUC 但未检测到 Brier/Calibration 指标。"
+                        "train_model.py 必须对所有模型输出统一评估指标集: "
+                        "AUC + PR-AUC + Brier + Calib Slope + Sens/Spec + F1"
+                    )
+        return True, "跳过 (无法定位项目目录, 已从 Agent 输出做基本检查)"
+
+    # 读取 cv_results.json
+    cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
+               list(proj_dir.glob('data/cv_results.json'))
+    if not cv_paths:
+        return True, "跳过 (未找到 cv_results.json)"
+
+    try:
+        cv_data = json.loads(cv_paths[0].read_text())
+    except (json.JSONDecodeError, OSError):
+        return True, "跳过 (cv_results.json 无法解析)"
+
+    models = _flatten_model_metrics(cv_data)
+    if not models:
+        return True, "跳过 (cv_results.json 中未检测到模型级别指标)"
+
+    # 检查每个模型的必备指标
+    missing_per_model = {}
+    for model_id, metrics in models.items():
+        flat_keys = {str(k).lower().replace(" ", "_").replace("-", "_") for k in metrics.keys()}
+        missing = []
+        for metric_name, aliases in _REQUIRED_EVAL_METRICS.items():
+            if not any(a in flat_keys for a in aliases):
+                missing.append(metric_name)
+        if missing:
+            missing_per_model[model_id] = missing
+
+    if missing_per_model:
+        lines = []
+        for model_id, missing in missing_per_model.items():
+            lines.append(
+                f"  • {model_id}: 缺少 {', '.join(missing)}"
+            )
+        return False, (
+            f"模型评估指标不完整 — {len(missing_per_model)} 个模型缺指标:\n"
+            + "\n".join(lines)
+            + "\n\ntrain_model.py 必须对所有模型输出统一指标集: "
+            + "AUC+CI | PR-AUC | Brier | Calib Slope/Intercept | Sens/Spec | PPV/NPV | F1"
+        )
+
+    return True, (
+        f"模型评估指标完整: {len(models)} 个模型均包含全部 {len(_REQUIRED_EVAL_METRICS)} 类必备指标 ✓"
+    )
+
+
 # --- Phase 6: 论文撰写 ---
 
 def check_title_length(outputs: dict, orch) -> tuple:
@@ -825,6 +966,36 @@ def check_software_version_reported(outputs: dict, orch) -> tuple:
     return True, "跳过"
 
 
+def check_methods_excessive_subsections(outputs: dict, orch) -> tuple:
+    """Methods 子标题不超过 5 个(五大标准段落), 防止 checklist→header 映射导致章节碎片化"""
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
+            m = re.search(r'## Methods?\s*\n(.*?)(?=\n## [A-Za-z]|\Z)', output, re.DOTALL)
+            if not m:
+                return True, "跳过"
+            methods_section = m.group(1)
+            subsections = re.findall(r'^###\s', methods_section, re.MULTILINE)
+            if len(subsections) > 5:
+                return False, f"Methods 有 {len(subsections)} 个 ### 子标题, 超过上限 5。请将额外内容(如正态性检验/缺失处理/软件版本)整合到五大标准段落中"
+            return True, f"Methods 子标题数 {len(subsections)} ✓"
+    return True, "跳过"
+
+
+def check_results_excessive_subsections(outputs: dict, orch) -> tuple:
+    """Results 子标题不超过 5 个(五大标准段落), 防止 ad-hoc 碎片化"""
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
+            m = re.search(r'## Results?\s*\n(.*?)(?=\n## [A-Za-z]|\Z)', output, re.DOTALL)
+            if not m:
+                return True, "跳过"
+            results_section = m.group(1)
+            subsections = re.findall(r'^###\s', results_section, re.MULTILINE)
+            if len(subsections) > 5:
+                return False, f"Results 有 {len(subsections)} 个 ### 子标题, 超过上限 5。请按标准五段流程组织 (Population / Performance / Features / Secondary / Sensitivity)，禁止为单张图/表创建独立子标题"
+            return True, f"Results 子标题数 {len(subsections)} ✓"
+    return True, "跳过"
+
+
 # ============================================================
 # Phase 6: 去 AI 味质量检查 (humanize quality)
 # ============================================================
@@ -1445,7 +1616,7 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
     cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
                list(proj_dir.glob('data/cv_results.json'))
     if not cv_paths:
-        return True, "跳过 (未找到 cv_results.json, 可能尚未完成 Phase 3)"
+        return False, "数值追踪失败: 未找到 cv_results.json (Phase 3 基线文件缺失，无法执行数值追踪。请返回 Phase 3 完成模型训练并产出 cv_results.json)"
 
     try:
         cv_data = json.loads(cv_paths[0].read_text())
@@ -1480,6 +1651,17 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
 
     figure_data_files = list(proj_dir.glob('figures/figure*_data.json')) + \
                         list(proj_dir.glob('figures/Figure*_data.json'))
+
+    # 🆕 强制要求: 有 Figure .png 就必须有对应 data.json (防止数值追踪静默跳过)
+    figure_pngs = list(proj_dir.glob('figures/Figure*.png')) + \
+                  list(proj_dir.glob('figures/figure*.png'))
+    if figure_pngs and not figure_data_files:
+        return False, (
+            f"数值追踪失败: 发现 {len(figure_pngs)} 个 Figure .png 文件, "
+            f"但没有任何 Figure*_data.json 文件。每个 Figure 必须同时产出 data.json, "
+            f"缺失 data.json 将导致数值追踪无法执行。"
+        )
+
     for fd in figure_data_files:
         try:
             fig_data = json.loads(fd.read_text())
@@ -1532,6 +1714,461 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
     return True, (
         f"数值可追溯性通过: {len(figure_data_files)} 个 figure data + "
         f"{len(table_files)} 个 table 全部与 cv_results.json 一致 ✓"
+    )
+
+
+def check_cohort_attrition_consistency(outputs: dict, orch) -> tuple:
+    """Figure 1 的队列筛选数字必须与 cohort_attrition.json 一致, 禁止推测。
+
+    检查逻辑:
+    1. 定位项目目录
+    2. 读取 outputs/cohort_attrition.json (Phase 3 产出, 真相源)
+    3. 读取 figures/Figure1_*_data.json (Phase 6 产出)
+    4. 对比每个 step 的 excluded/remaining 数字
+    """
+    import json
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 检查 cohort_attrition.json 是否存在
+    cohort_paths = list(proj_dir.glob('outputs/cohort_attrition.json'))
+    if not cohort_paths:
+        return False, (
+            "队列筛选一致性检查失败: 未找到 outputs/cohort_attrition.json。"
+            "Phase 3 必须产出 cohort_attrition.json (记录每个筛选步骤的排除 N 和剩余 N)。"
+            "请返回 Phase 3, 在数据清洗完成后立即输出此文件。"
+        )
+
+    try:
+        cohort = json.loads(cohort_paths[0].read_text())
+    except (json.JSONDecodeError, OSError):
+        return False, "队列筛选一致性检查失败: outputs/cohort_attrition.json 无法解析"
+
+    # 2. 检查 Figure 1 data.json
+    fig1_data_paths = list(proj_dir.glob('figures/Figure1_*_data.json')) + \
+                      list(proj_dir.glob('figures/figure1_*_data.json'))
+    if not fig1_data_paths:
+        return False, (
+            "队列筛选一致性检查失败: 未找到 Figure1_*_data.json。"
+            "Figure 1 必须产出对应的 data.json, 其筛选数字从 cohort_attrition.json 读取后写入。"
+        )
+
+    try:
+        fig1 = json.loads(fig1_data_paths[0].read_text())
+    except (json.JSONDecodeError, OSError):
+        return False, f"队列筛选一致性检查失败: {fig1_data_paths[0].name} 无法解析"
+
+    # 3. 对比每个 step 的 excluded/remaining
+    violations = []
+    cohort_steps = cohort.get('steps', [])
+    fig1_steps = fig1.get('steps', [])
+
+    if len(cohort_steps) != len(fig1_steps):
+        violations.append(
+            f"步数不一致: cohort_attrition={len(cohort_steps)}步, "
+            f"Figure 1 data={len(fig1_steps)}步"
+        )
+    else:
+        for i, (cs, fs) in enumerate(zip(cohort_steps, fig1_steps)):
+            for key in ('excluded', 'remaining'):
+                cv = cs.get(key)
+                fv = fs.get(key)
+                if cv is None or fv is None:
+                    violations.append(f"Step {i+1}: {key} 缺失")
+                elif isinstance(cv, (int, float)) and isinstance(fv, (int, float)):
+                    if cv != fv:
+                        violations.append(
+                            f"Step {i+1} ({cs.get('criterion','?')}): "
+                            f"{key}={fv} (Figure 1) vs {cv} (cohort_attrition)"
+                        )
+
+    # 4. 对比 final_n / event_n
+    for key in ('final_n', 'event_n'):
+        cv = cohort.get(key)
+        fv = fig1.get(key)
+        if cv is not None and fv is not None and cv != fv:
+            violations.append(f"{key}={fv} (Figure 1) vs {cv} (cohort_attrition)")
+
+    if violations:
+        return False, (
+            f"队列筛选一致性检查失败 — Figure 1 数字与 cohort_attrition.json 不一致 "
+            f"(推测或编造嫌疑):\n" + "\n".join(f"  • {v}" for v in violations[:5])
+        )
+
+    return True, (
+        f"队列筛选一致性通过: Figure 1 的 {len(cohort_steps)} 步筛选数字与 "
+        f"cohort_attrition.json 完全一致 ✓"
+    )
+
+
+# ================================================================
+# 医学论文数值精度标准 — 钱学森总体设计部: 接口格式标准化
+# ================================================================
+
+# 精度规范: 每个指标类型的期望小数位数
+NUMERICAL_PRECISION_STANDARDS = {
+    "auc": 3,           # AUC / C-statistic / C-index → 0.842
+    "p_value": 3,       # p 值 → 0.032 (p < 0.001 除外)
+    "or": 2,            # Odds Ratio → 1.34
+    "hr": 2,            # Hazard Ratio → 0.78
+    "rr": 2,            # Risk Ratio → 1.25
+    "percentage": 1,    # 百分比 → 84.2%
+    "effect_size": 2,   # Cohen's d / Hedges' g → 0.45
+    "sample_size": 0,   # 样本量/计数 → 整数
+    "ci": None,         # 95% CI — 精度与点估计一致(不独立检查)
+}
+
+# 指标识别正则: (标签, 模式, 数值捕获组位置)
+_METRIC_PATTERNS = [
+    # AUC
+    ("auc", [
+        r'(?:AUC|c[-\s]?statistic|c[-\s]?index|AUROC)\s*(?:=|:|=|was|of)\s*(\d+\.\d+)',
+        r'area under the (?:ROC\s*)?curve\s*(?:=|:|=|was|of)\s*(\d+\.\d+)',
+    ]),
+    # p 值
+    ("p_value", [
+        r'[Pp]\s*[=<]\s*(\d+\.\d+)',
+        r'[Pp]\s*value\s*[=<]\s*(\d+\.\d+)',
+    ]),
+    # OR
+    ("or", [
+        r'(?:OR|odds\s*ratio)\s*(?:=|:)\s*(\d+\.\d+)',
+        r'(?:OR|odds\s*ratio)\s*(?:of|=)\s*(\d+\.\d+)',
+    ]),
+    # HR
+    ("hr", [
+        r'(?:HR|hazard\s*ratio)\s*(?:=|:)\s*(\d+\.\d+)',
+        r'(?:HR|hazard\s*ratio)\s*(?:of|=)\s*(\d+\.\d+)',
+    ]),
+    # RR
+    ("rr", [
+        r'(?:RR|risk\s*ratio|relative\s*risk)\s*(?:=|:)\s*(\d+\.\d+)',
+    ]),
+    # Percentage
+    ("percentage", [
+        r'(\d+\.\d+)%',
+        r'(\d+\.\d+)\s*percent',
+    ]),
+    # Effect size
+    ("effect_size", [
+        r"(?:Cohen'?s?\s*d|Hedges'?\s*g)\s*(?:=|:|=)\s*(\d+\.\d+)",
+    ]),
+    # Sample size (integer counts)
+    ("sample_size", [
+        r'(?:[Nn]\s*=\s*)(\d{4,})',
+        r'(?:n\s*=\s*)(\d{3,})',
+        r'(?:included|enrolled|recruited|analyzed)\s+(\d{3,})',
+    ]),
+]
+
+
+def check_numerical_precision_consistency(outputs: dict, orch) -> tuple:
+    """跨 manuscript/tables/figures 数值精度一致性检查
+
+    钱学森总体设计部: 接口格式标准化。同一指标在全文中必须使用相同的小数位数。
+    例如 AUC 在图注中为 0.8423 (4位), 在正文中为 0.842 (3位) → FAIL。
+
+    起因: 2026-05-13 发现 generate_figures.py 输出 raw float (4位) 写入 figure caption,
+    但 scientific-writer 按医学惯例舍入到 3 位。check_numerical_traceability 的 0.1%
+    偏差阈值太宽 (4→3位舍入偏差仅 0.036%), 未捕获此不一致。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 收集所有文本源
+    text_sources = {}  # {source_label: text}
+
+    manuscript = proj_dir / 'submission' / 'manuscript.md'
+    if manuscript.exists():
+        try:
+            text_sources['manuscript.md'] = manuscript.read_text()
+        except OSError:
+            pass
+
+    for tf in proj_dir.glob('tables/*.md'):
+        try:
+            text_sources[f'tables/{tf.name}'] = tf.read_text()
+        except OSError:
+            pass
+
+    for cf in proj_dir.glob('figures/*caption*.md'):
+        try:
+            text_sources[f'figures/{cf.name}'] = cf.read_text()
+        except OSError:
+            pass
+
+    # 也检查 submission 层
+    for tf in proj_dir.glob('submission/tables/*.csv'):
+        try:
+            text_sources[f'submission/{tf.name}'] = tf.read_text()
+        except OSError:
+            pass
+
+    if len(text_sources) < 2:
+        return True, "跳过 (文本源不足 2 个, 无法交叉比较精度)"
+
+    # 2. 按指标类型提取 (metric_type, value, decimal_places, source) 四元组
+    from collections import defaultdict
+    metric_values = defaultdict(list)  # {metric_type: [(value_str, decimal_places, source)]}
+
+    for source, text in text_sources.items():
+        for metric_type, patterns in _METRIC_PATTERNS:
+            for pat in patterns:
+                for m in re.finditer(pat, text, re.IGNORECASE):
+                    val_str = m.group(1)
+                    try:
+                        val = float(val_str)
+                    except ValueError:
+                        continue
+                    # 跳过明显不是指标值的数字 (如年份 2023, p < 0.001 字符串)
+                    if metric_type == "sample_size" and val < 100:
+                        continue
+                    if metric_type == "percentage" and (val < 0.1 or val > 100):
+                        continue
+
+                    # 计算小数位数
+                    if '.' in val_str:
+                        decimal_places = len(val_str.split('.')[1])
+                    else:
+                        decimal_places = 0
+
+                    # 排除已格式化的 p < 0.001 (p value is a threshold statement)
+                    if metric_type == "p_value":
+                        before = text[max(0, m.start()-10):m.start()]
+                        if re.search(r'<\s*$', before):  # "p < 0.001"
+                            continue
+
+                    metric_values[metric_type].append((val_str, decimal_places, source))
+
+    if not metric_values:
+        return True, "跳过 (未检测到任何数值指标)"
+
+    # 3. 检查精度一致性
+    violations = []
+    checked_groups = 0
+
+    for metric_type, entries in metric_values.items():
+        if len(entries) < 2:
+            continue  # 单一出现, 无法比较
+
+        checked_groups += 1
+
+        # 按小数位数分组
+        precision_groups = defaultdict(list)  # {decimal_places: [(val_str, source)]}
+        for val_str, dp, source in entries:
+            precision_groups[dp].append((val_str, source))
+
+        if len(precision_groups) <= 1:
+            continue  # 所有同类型值精度一致
+
+        # 检查是否违反期望标准
+        expected_dp = NUMERICAL_PRECISION_STANDARDS.get(metric_type)
+        nonstandard = []
+        for dp, vals in precision_groups.items():
+            if expected_dp is not None and dp != expected_dp:
+                examples = [f"{v[0]} ({v[1]})" for v in vals[:3]]
+                nonstandard.append(
+                    f"{dp} 位小数 (期望 {expected_dp} 位): {', '.join(examples)}"
+                )
+
+        # 构建违规详情
+        precision_summary = []
+        for dp in sorted(precision_groups.keys()):
+            vals = precision_groups[dp]
+            examples = [f"{v[0]} ({v[1]})" for v in vals[:3]]
+            marker = " ✓" if (expected_dp is None or dp == expected_dp) else " ✗"
+            precision_summary.append(
+                f"  {dp} 位小数{marker}: {', '.join(examples)}"
+                + (f" ...共{len(vals)}处" if len(vals) > 3 else "")
+            )
+
+        metric_label = {
+            "auc": "AUC/C-statistic", "p_value": "p值", "or": "OR",
+            "hr": "HR", "rr": "RR", "percentage": "百分比",
+            "effect_size": "效应量", "sample_size": "样本量",
+        }.get(metric_type, metric_type)
+
+        violations.append(
+            f"{metric_label} 精度不一致 ({len(precision_groups)} 种精度):\n"
+            + "\n".join(precision_summary)
+        )
+
+    if violations:
+        return False, (
+            f"数值精度一致性不通过 — {len(violations)} 类指标精度不统一:\n\n"
+            + "\n\n".join(violations)
+            + "\n\n原因: generate_figures.py 输出 raw float, 但 manuscript 按医学惯例舍入。"
+            + "\n修复: generate_figures.py 中所有数值输出必须按精度标准舍入: "
+            + ", ".join(f"{k}={v}位" for k, v in NUMERICAL_PRECISION_STANDARDS.items() if v is not None)
+        )
+
+    return True, (
+        f"数值精度一致性通过: {checked_groups} 类指标精度统一 ✓"
+        + (f" (标准: {', '.join(f'{k}={v}位' for k, v in NUMERICAL_PRECISION_STANDARDS.items() if v is not None)})"
+           if checked_groups > 0 else "")
+    )
+
+
+# Table 2 必备列定义
+_TABLE2_REQUIRED_COLUMNS = [
+    "model",           # 模型名称
+    "auc",             # AUC (ROC)
+    "auc_ci",          # AUC 95% CI
+    "pr_auc",          # PR-AUC
+    "brier",           # Brier Score
+    "calib_slope",     # Calibration Slope
+    "sensitivity",     # Sensitivity
+    "specificity",     # Specificity
+    "f1",              # F1 Score
+]
+
+
+def check_table2_content_completeness(outputs: dict, orch) -> tuple:
+    """Table 2 (模型性能对比) 必须包含所有必备列, 且行数 ≥ cv_results.json 模型数
+
+    钱学森总体设计部: 交付件接口标准化。缺列/缺行 → Gate 6 FAIL。
+
+    起因: 2026-05-13 发现 Table 2 非主模型缺少 PR-AUC | Brier | Calib Slope,
+    根因是 Phase 3 train_model.py 未对基线模型计算全量指标, 且 Gate 6 无内容完整性检查。
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 读取 Table 2
+    table2_paths = list(proj_dir.glob('tables/table2*.md')) + \
+                   list(proj_dir.glob('tables/*model_performance*.md')) + \
+                   list(proj_dir.glob('tables/Table2*.md'))
+    if not table2_paths:
+        return False, "Table 2 文件不存在 (tables/table2_model_performance.md)"
+
+    try:
+        table2_text = table2_paths[0].read_text()
+    except OSError:
+        return True, "跳过 (无法读取 Table 2)"
+
+    violations = []
+
+    # 2. 检查列完整性 — 表头行
+    header_match = re.search(r'^\|(.+)\|', table2_text, re.MULTILINE)
+    if not header_match:
+        return False, "Table 2 无 Markdown 表头行 (| column1 | column2 | ...)"
+
+    header_text = header_match.group(1).lower()
+    table_rows = [r.strip() for r in table2_text.split('\n') if r.strip().startswith('|')]
+    data_rows = [r for r in table_rows if not re.match(r'^\|[\s\-:]+\|$', r)]  # 排除分隔行
+    data_rows = data_rows[1:]  # 跳过表头
+
+    # 列别名映射
+    column_aliases = {
+        "model": ["model", "模型"],
+        "auc": ["auc", "auroc", "c-statistic", "c-stat"],
+        "auc_ci": ["95% ci", "ci", "confidence", "置信区间"],
+        "pr_auc": ["pr-auc", "pr auc", "prauc", "precision-recall"],
+        "brier": ["brier"],
+        "calib_slope": ["calib", "calibration", "slope"],
+        "sensitivity": ["sensitivity", "sens", "tpr", "recall"],
+        "specificity": ["specificity", "spec", "tnr"],
+        "f1": ["f1", "f1-score", "f1 score"],
+    }
+
+    missing_cols = []
+    for col_key, aliases in column_aliases.items():
+        if not any(a in header_text for a in aliases):
+            missing_cols.append(col_key)
+
+    if missing_cols:
+        violations.append(
+            f"Table 2 缺少 {len(missing_cols)} 个必备列: {', '.join(missing_cols)}"
+        )
+
+    # 3. 检查行数 — 至少等于 cv_results.json 中模型数
+    model_count_from_cv = len(data_rows)  # 默认以 Table 2 行数为准
+    cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
+               list(proj_dir.glob('data/cv_results.json'))
+    if cv_paths:
+        try:
+            cv_data = json.loads(cv_paths[0].read_text())
+            cv_models = _flatten_model_metrics(cv_data)
+            if cv_models:
+                model_count_from_cv = len(cv_models)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if len(data_rows) < model_count_from_cv or len(data_rows) < 2:
+        violations.append(
+            f"Table 2 数据行不足: {len(data_rows)} 行 (需 ≥{model_count_from_cv} 行, "
+            f"至少包含主模型+baseline)"
+        )
+
+    # 4. 检查每行是否有空值 (|| 或 | |)
+    empty_cell_rows = []
+    for i, row in enumerate(data_rows):
+        cells = [c.strip() for c in row.split('|')[1:-1]]  # 去掉首尾 |
+        if any(c == '' or c == '-' or c == 'N/A' for c in cells[1:]):  # 跳过模型名列
+            empty_cell_rows.append(f"行 {i+2}: {cells[0] if cells else '?'}")
+
+    if empty_cell_rows:
+        violations.append(
+            f"Table 2 有 {len(empty_cell_rows)} 行含空值: "
+            + "; ".join(empty_cell_rows[:5])
+            + (f" ...等{len(empty_cell_rows)}行" if len(empty_cell_rows) > 5 else "")
+        )
+
+    if violations:
+        return False, (
+            f"Table 2 内容完整性不通过:\n"
+            + "\n".join(f"  • {v}" for v in violations)
+            + "\n\nTable 2 必备列: " + " | ".join(_TABLE2_REQUIRED_COLUMNS)
+            + "\n所有模型(主模型+baseline)必须填充全部列, 不得留空。"
+            + "\n如果 cv_results.json 中对应模型缺少某指标, 请回到 Phase 3 补充 train_model.py 评估。"
+        )
+
+    return True, (
+        f"Table 2 内容完整: {len(data_rows)} 行 × 所有必备列 ✓"
     )
 
 
@@ -1913,6 +2550,135 @@ def check_figure_text_citation(outputs: dict, orch) -> tuple:
 
 
 # ============================================================
+# KB 富化闸门检查 (kb_enrich)
+# ============================================================
+
+def check_doi_verified_for_new_entries(outputs: dict, orch) -> tuple:
+    """新入库文献 DOI 全部经 CrossRef 验证, fake DOI 数必须为 0"""
+    import json as _json
+    combined = " ".join(str(v) for v in outputs.values())
+
+    # 从输出中提取 DOI 验证结果
+    fake_count = 0
+    error_count = 0
+    verified_count = 0
+
+    # 尝试解析 ingest report
+    for agent_id, output in outputs.items():
+        if "research-assistant" in agent_id.lower():
+            # 搜索 fake DOI 标记
+            fake_matches = re.findall(r'(?:fake|FAKE|虚假).*?(\d+)', output)
+            for m in fake_matches:
+                fake_count += int(m)
+
+            # 搜索验证统计
+            verify_stats = re.findall(r'(\d+)/(\d+).*?verified', output)
+            if verify_stats:
+                verified_count = int(verify_stats[0][0])
+                total = int(verify_stats[0][1])
+                fake_count = total - verified_count
+
+    if fake_count > 0:
+        return False, f"DOI 验证失败 — {fake_count} 篇 fake DOI, 要求 fake DOI = 0"
+    return True, "DOI 验证通过: 所有入库文献 DOI 真实 ✓"
+
+
+def check_no_duplicate_in_kb(outputs: dict, orch) -> tuple:
+    """新入库文献不与知识库已有文献重复"""
+    combined = " ".join(str(v) for v in outputs.values())
+
+    # 从入库报告的「统计概览」或「跳过清单」中提取重复跳过数量
+    dup_count = 0
+    # 模式: "重复跳过 | 3 篇" 或 "重复跳过: 3"
+    dup_stats = re.findall(r'重复跳过\s*[:\|]\s*(\d+)', combined)
+    if dup_stats:
+        dup_count = sum(int(x) for x in dup_stats)
+
+    # 模式: 统计概览表格中 "重复跳过" 行
+    if not dup_count:
+        dup_rows = re.findall(r'重复(?:跳过|已存在).*?(\d+)\s*篇', combined)
+        if dup_rows:
+            dup_count = sum(int(x) for x in dup_rows)
+
+    # 计数跳过清单中的条目数
+    skip_list_items = re.findall(r'\|.*?\|\s*重复\s*[—–-]', combined)
+    if not dup_count and skip_list_items:
+        dup_count = len(skip_list_items)
+
+    # 重复不阻断 (正常现象), 仅报告
+    if dup_count > 0:
+        return True, f"去重正常: {dup_count} 篇已存在, 已跳过 (不阻断)"
+    return True, "无重复文献 ✓"
+
+
+def check_literature_note_yaml_complete(outputs: dict, orch) -> tuple:
+    """新写入的文献笔记 YAML frontmatter 包含所有必填字段"""
+    import json as _json
+    required_fields = ["title", "first_author", "year", "journal", "doi",
+                       "topics", "relevance_score", "date_read"]
+
+    # 从输出中提取入库清单数据
+    combined = " ".join(str(v) for v in outputs.values())
+
+    # 检查是否有 "入库成功" 或 write_literature_note 调用
+    ingest_success = re.findall(r'入库成功[:\s]*(\d+)', combined)
+    if not ingest_success:
+        # 可能没有新文献入库, 不阻断
+        return True, "无新文献入库, 跳过 YAML 完整性检查"
+
+    # 搜索可能的 frontmatter 缺失告警
+    missing_warnings = re.findall(r'(?:missing|缺少|缺失).*?(field|字段|title|doi)', combined, re.IGNORECASE)
+    if missing_warnings:
+        return False, f"文献笔记 YAML frontmatter 缺少必填字段: {missing_warnings[:3]}"
+
+    return True, "文献笔记 YAML frontmatter 完整 ✓"
+
+
+def check_recency_of_ingested(outputs: dict, orch) -> tuple:
+    """入库论文发表年份满足时效性要求 (近 2 年)"""
+    import json as _json
+    from datetime import datetime
+
+    combined = " ".join(str(v) for v in outputs.values())
+    current_year = datetime.now().year
+    threshold_year = current_year - 2
+
+    # 从 JSON 中提取 candidates[].year (精确提取, 避免匹配到数据年份如 CHARLS 2015)
+    years = []
+    json_blocks = re.findall(r'\{[^{}]*"candidates"\s*:\s*\[.*?\]\s*\}', combined, re.DOTALL)
+    for block in json_blocks:
+        try:
+            data = _json.loads(block)
+            for c in data.get("candidates", []):
+                y = c.get("year")
+                if isinstance(y, int) and 1900 < y < 2100:
+                    years.append(y)
+        except (_json.JSONDecodeError, TypeError):
+            continue
+
+    # 回退: 从 ingest report markdown 表格中提取年份 (| 1 | ... | ... | 2026 | ... |)
+    if not years:
+        year_cols = re.findall(r'\|\s*\d+\s*\|.*?\|\s*(\d{4})\s*\|', combined)
+        for y_str in year_cols:
+            y = int(y_str)
+            if 1900 < y < 2100:
+                years.append(y)
+
+    if not years:
+        return True, "无法从输出中提取论文发表年份, 跳过时效性检查 (非阻断)"
+
+    old_papers = [y for y in years if y < threshold_year]
+    if old_papers:
+        return False, (
+            f"入库文献时效性不达标 — {len(old_papers)} 篇超过 2 年:\n"
+            + ", ".join(str(y) for y in old_papers[:5])
+            + f"\n  要求: 入库文献应为 {threshold_year} 年及以后发表"
+        )
+
+    return True, f"入库文献时效性达标: {len(years)} 篇均在 {threshold_year} 年及以后 ✓"
+
+
+# ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
 
@@ -1950,6 +2716,7 @@ GATE_DEFINITIONS = {
             "baseline_included": check_baseline_included,
             "n_jobs_safe": check_n_jobs_safe,
             "calibration_trend": check_calibration_trend,  # 🆕 Δ-Gate: 校准度趋势
+            "all_models_evaluated": check_all_models_evaluated_completely,  # 🆕 所有模型指标完整
         },
         "llm_checks": [
             "模型选择层级是否合理 (baseline → 复杂模型)?",
@@ -1990,6 +2757,7 @@ GATE_DEFINITIONS = {
             "title_length": check_title_length,
             "sections_exist": check_sections_exist,
             "tables_exist": check_tables_exist,
+            "table2_complete": check_table2_content_completeness,
             "figures_exist": check_figures_exist,
             "manuscript_assembled": check_manuscript_assembled,
             "abstract_word_count": check_abstract_word_count,
@@ -2011,11 +2779,15 @@ GATE_DEFINITIONS = {
             "discussion_no_conclusion": check_discussion_p4_no_conclusion,
             "humanize_quality": check_humanize_quality,
             "numerical_traceability": check_numerical_traceability,
+            "precision_consistency": check_numerical_precision_consistency,
             "baseline_compliance": check_baseline_compliance,
             "submission_integrity": check_submission_structure_integrity,
             "figure_naming": check_figure_naming_convention,
             "figure_has_image": check_all_figures_have_images,
             "figure_text_citation": check_figure_text_citation,
+            "methods_subsections": check_methods_excessive_subsections,
+            "results_subsections": check_results_excessive_subsections,
+            "cohort_attrition": check_cohort_attrition_consistency,
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",
@@ -2026,6 +2798,19 @@ GATE_DEFINITIONS = {
             "参考文献时效性是否达标 (≥80% 近5年文献)?",
             "所有非通用缩写在首次出现时是否给出了全称 (全称 (ABBR) 格式)? 通用缩写 (DNA/RNA/BMI/CI/AUC/OR/HR/SD) 除外",
             "去 AI 味改写是否真正改善了文本自然度? (句子长度变化/段落节奏/转折自然性/模板痕迹/hedge 适度)",
+        ],
+    },
+    "kb_enrich": {
+        "auto_checks": {
+            "doi_verified": check_doi_verified_for_new_entries,
+            "no_duplicate": check_no_duplicate_in_kb,
+            "yaml_complete": check_literature_note_yaml_complete,
+            "recency": check_recency_of_ingested,
+        },
+        "llm_checks": [
+            "入库文献是否与研究领域 (老年医学/泌尿外科) 高度相关? 是否有堆砌无关文献?",
+            "文献笔记的 one_liner 是否准确概括了论文核心发现? (非模糊描述)",
+            "每条 actionable 和 gaps 是否具体、可操作? (非泛泛而谈)",
         ],
     },
 }

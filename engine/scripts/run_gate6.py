@@ -28,6 +28,7 @@ from engine.core.gate_checks import (
     check_title_length,
     check_sections_exist,
     check_tables_exist,
+    check_table2_content_completeness,
     check_figures_exist,
     check_manuscript_assembled,
     check_abstract_word_count,
@@ -50,6 +51,7 @@ from engine.core.gate_checks import (
     check_humanize_quality,
     # 🆕 Phase 6 checks (A1)
     check_numerical_traceability,
+    check_numerical_precision_consistency,
     check_baseline_compliance,
     check_submission_structure_integrity,
     check_figure_naming_convention,
@@ -68,6 +70,7 @@ GATE6_PYTHON_CHECKS = [
     ("title_length", check_title_length, "Title ≤ 15 词"),
     ("sections_exist", check_sections_exist, "Sections 分章节存在 (零件层)"),
     ("tables_exist", check_tables_exist, "Tables 存在 (双格式)"),
+    ("table2_complete", check_table2_content_completeness, "Table 2 必备列和行完整"),
     ("figures_exist", check_figures_exist, "Figures 存在 + 命名格式 (双格式)"),
     ("figure_naming", check_figure_naming_convention, "Figure 命名匹配 Figure[N]_[descriptor].[ext]"),
     ("manuscript_assembled", check_manuscript_assembled, "Manuscript 合稿"),
@@ -95,6 +98,7 @@ GATE6_PYTHON_CHECKS = [
     ("humanize_quality", check_humanize_quality, "去 AI 味质量检查 (Python 层)"),
     # 🆕 数值一致性 + 基线合规 + 投稿层完整性
     ("numerical_traceability", check_numerical_traceability, "数值可追溯性 (偏差 <0.1%)"),
+    ("precision_consistency", check_numerical_precision_consistency, "数值精度跨 manuscript/tables/figures 一致"),
     ("baseline_compliance", check_baseline_compliance, "Figure 产自基线数据"),
     ("submission_integrity", check_submission_structure_integrity, "投稿层结构完整性"),
     ("figure_has_image", check_all_figures_have_images, "每张 Figure caption 有对应图像"),

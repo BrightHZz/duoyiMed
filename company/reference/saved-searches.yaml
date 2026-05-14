@@ -1,0 +1,89 @@
+# 知识库自主富化 — 预配置检索式
+# 每个检索式定义: 查询字符串 + 目标频率 + 优先级 + 标签
+# 用于研究员 (research-assistant) 定期自主检索最新文献充实知识库
+
+divisions:
+  geriatrics:
+    topics:
+      - name: "衰弱+ML预测"
+        queries:
+          - '(frailty OR "frail elderly") AND ("machine learning" OR "deep learning") AND prediction'
+          - '(sarcopenia OR "muscle mass") AND ("random forest" OR xgboost) AND prediction'
+        frequency: weekly
+        priority: high
+        tags: [frailty_prediction, ml_methods]
+        max_results_per_query: 5
+
+      - name: "衰老时钟+表观遗传"
+        queries:
+          - '("epigenetic clock" OR "DNA methylation age" OR "biological age") AND (prediction OR biomarker)'
+          - '("aging clock" OR "biological aging") AND ("machine learning" OR "deep learning")'
+        frequency: weekly
+        priority: high
+        tags: [aging_clock, epigenetics]
+        max_results_per_query: 5
+
+      - name: "跌倒风险预测"
+        queries:
+          - '("accidental falls" OR "fall risk") AND ("prediction model" OR "risk stratification") AND elderly'
+        frequency: weekly
+        priority: medium
+        tags: [fall_prediction, risk_stratification]
+        max_results_per_query: 3
+
+      - name: "认知衰退+ML"
+        queries:
+          - '("cognitive dysfunction" OR "cognitive decline" OR dementia) AND ("machine learning" OR "deep learning") AND prediction'
+        frequency: weekly
+        priority: medium
+        tags: [cognitive_decline, ml_methods]
+        max_results_per_query: 3
+
+      - name: "多病共存+预测模型"
+        queries:
+          - '("multimorbidity" OR "multiple chronic conditions") AND ("prediction model" OR "risk prediction" OR "machine learning")'
+        frequency: biweekly
+        priority: medium
+        tags: [multimorbidity, prediction]
+        max_results_per_query: 3
+
+  urology:
+    topics:
+      - name: "肾结石+ML预测"
+        queries:
+          - '(urolithiasis OR "kidney stone" OR nephrolithiasis) AND ("machine learning" OR "deep learning") AND prediction'
+          - '("renal stone" OR "urinary stone") AND ("random forest" OR xgboost OR "neural network") AND recurrence'
+        frequency: weekly
+        priority: high
+        tags: [urolithiasis_prediction, ml_methods]
+        max_results_per_query: 5
+
+      - name: "前列腺癌+预后模型"
+        queries:
+          - '("prostatic neoplasms" OR "prostate cancer") AND ("prognostic model" OR "risk prediction" OR "machine learning")'
+          - '(prostatectomy OR "radical prostatectomy") AND (biochemical recurrence OR prognosis) AND prediction'
+        frequency: weekly
+        priority: high
+        tags: [prostate_cancer, prognosis]
+        max_results_per_query: 5
+
+      - name: "膀胱癌+预测"
+        queries:
+          - '("urinary bladder neoplasms" OR "bladder cancer") AND ("prediction model" OR "machine learning")'
+        frequency: weekly
+        priority: medium
+        tags: [bladder_cancer, prediction]
+        max_results_per_query: 3
+
+      - name: "BPH+治疗预测"
+        queries:
+          - '("prostatic hyperplasia" OR BPH OR "benign prostatic hyperplasia") AND (outcome OR prediction OR treatment)'
+        frequency: biweekly
+        priority: medium
+        tags: [bph, treatment_outcome]
+        max_results_per_query: 3
+
+settings:
+  recency_days: 14
+  min_relevance_score: 3
+  max_ingest_per_run: 15

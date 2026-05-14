@@ -79,6 +79,7 @@ class ToolRegistry:
         self._register(self._update_project_status())
         self._register(self._verify_doi())
         self._register(self._verify_all_dois())
+        self._register(self._check_kb_duplicate())
 
     def _register(self, tool_def: dict):
         handler = tool_def.pop("_handler")
@@ -108,8 +109,9 @@ class ToolRegistry:
             ],
             "research-assistant": [
                 "search_knowledge_base", "read_kb_file", "write_kb_file",
-                "write_literature_note",
+                "write_literature_note", "check_kb_duplicate",
                 "list_datasource_files", "read_datasource_headers",
+                "verify_doi",
             ],
             "ml-engineer": [
                 "list_datasource_files", "read_datasource_headers",
@@ -1180,6 +1182,79 @@ class ToolRegistry:
                     "dois": {"type": "array", "items": {"type": "string"}, "description": "DOI 列表, 或包含 DOI 的文本字符串"},
                 },
                 "required": ["dois"],
+            },
+            "_handler": handler,
+        }
+
+    def _check_kb_duplicate(self):
+        """检查一篇论文是否已在知识库中 (按 DOI 精确匹配 + 标题模糊匹配)"""
+        def handler(input: dict) -> dict:
+            doi = input.get("doi", "").strip()
+            title = input.get("title", "").strip().lower()
+            lit_dir = self.vault / "literature"
+
+            if not lit_dir.exists():
+                return {"duplicate": False, "note": "文献目录不存在, 无法查重"}
+
+            # Step 1: DOI 精确匹配
+            if doi:
+                doi_clean = doi.replace("https://doi.org/", "").replace("http://dx.doi.org/", "")
+                for md_file in lit_dir.glob("*.md"):
+                    try:
+                        content = md_file.read_text(encoding="utf-8", errors="replace")
+                        if doi_clean in content or doi in content:
+                            return {
+                                "duplicate": True,
+                                "matched_by": "doi",
+                                "existing_file": str(md_file.relative_to(self.vault)),
+                            }
+                    except Exception:
+                        continue
+
+            # Step 2: 标题模糊匹配 (共享词比例 > 0.7)
+            if title:
+                tw = set(title.split())
+                if not tw:
+                    return {"duplicate": False}
+
+                for md_file in lit_dir.glob("*.md"):
+                    try:
+                        content = md_file.read_text(encoding="utf-8", errors="replace")
+                        fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+                        if fm_match:
+                            import yaml as _yaml
+                            try:
+                                fm = _yaml.safe_load(fm_match.group(1)) or {}
+                            except Exception:
+                                fm = {}
+                            existing_title = str(fm.get("title", "")).lower()
+                            if existing_title:
+                                ew = set(existing_title.split())
+                                if ew:
+                                    overlap = len(tw & ew)
+                                    similarity = overlap / min(len(tw), len(ew))
+                                    if similarity > 0.7:
+                                        return {
+                                            "duplicate": True,
+                                            "matched_by": "title_similarity",
+                                            "similarity": round(similarity, 2),
+                                            "existing_file": str(md_file.relative_to(self.vault)),
+                                        }
+                    except Exception:
+                        continue
+
+            return {"duplicate": False}
+
+        return {
+            "name": "check_kb_duplicate",
+            "description": "检查一篇论文是否已在知识库中。按 DOI 精确匹配，再按标题模糊匹配 (共享词比例 > 70%)。用于避免重复入库",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "doi": {"type": "string", "description": "论文 DOI (可选)"},
+                    "title": {"type": "string", "description": "论文标题 (可选, 用于模糊匹配)"},
+                },
+                "required": [],
             },
             "_handler": handler,
         }

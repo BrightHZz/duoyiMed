@@ -113,28 +113,92 @@ Step 7: Title (≤15词, 含关键词, 不含结论)
 - 观察性研究（队列/横断面）→ STROBE (五段式变体，增加偏倚控制段)
 - 系统综述 → PRISMA 2020 (结构不同，走文献综述流程)
 
-1. **Study Design and Setting**: 设计类型, 数据来源, 纳入时间范围, 遵循的报告指南
-2. **Study Population**: 纳入/排除标准(含理由), 样本量, 流程图引用
-3. **Outcome / Predictors**: 结局定义与测量, 预测因子定义与来源
-4. **Model Development**: 模型类型, 特征选择, 超参调优, 缺失处理, 验证策略
-5. **Sensitivity Analysis**: 预设敏感性分析
+Methods 使用 `###` 子标题组织，**仅限以下 5 个标准子标题**（与 JAMA/NEJM/Lancet 一致）：
 
-关键标准:
-- 每个连续变量注明正态性检验方法
-- 缺失数据注明缺失率与处理方法的假设(MCAR/MAR/MNAR)
-- 模型假设注明检验方法
-- 软件注明版本
-- CHARLS 变量注明原始变量名(如 `da049`, `qc003`)
+| # | 子标题 | 覆盖内容 |
+|---|--------|---------|
+| 1 | `### Study Design and Setting` | 设计类型, 数据来源, 纳入时间范围, 遵循的报告指南 |
+| 2 | `### Study Population` | 纳入/排除标准(含理由), 样本量, 流程图引用 |
+| 3 | `### Outcomes and Predictors` | 结局定义与测量, 预测因子定义与来源, CHARLS 原始变量名(如 `da049`, `qc003`) |
+| 4 | `### Statistical Analysis` | 正态性检验, 缺失率+MCAR/MAR/MNAR, 模型选择, 特征选择, 超参调优, 验证策略, **软件+版本号** |
+| 5 | `### Sensitivity Analysis` | 预设敏感性分析 (≥3项) |
 
-### Results — TEXT-TABLE-FIGURE 原则
+**🚫 子标题上限**: **禁止在 5 个标准子标题之外创建额外子标题**。以下关键标准必须整合到对应子标题内，不得独立成节：
 
-- 每张表/图配一段文字
-- 先描述人群 → 再报告主要发现 → 再特征重要性 → 再亚组/敏感性
-- 所有 AUC 必须带 95% CI
-- 连续变量: 正态用 mean±SD, 偏态用 median[IQR]
-- 分类变量: n(%)
-- 模型比较: DeLong test 或 equivalent, 报告 P 值
-- 不写 "significant" 而不给数值
+| 关键标准 | 整合到 | 写法示例 |
+|---------|--------|---------|
+| 正态性检验方法 | `### Statistical Analysis` 段内 1-2 句 | "Normality of continuous variables was assessed using the Shapiro-Wilk test." |
+| 缺失率与处理方法 | `### Statistical Analysis` 段内 | "Missing data (X%) were handled using multiple imputation by chained equations (MICE) under the MAR assumption." |
+| 模型假设检验 | `### Statistical Analysis` 段内 | 与对应模型描述合并 |
+| 软件名称与版本 | `### Statistical Analysis` 段内 | "All analyses were performed using Python 3.12 with scikit-learn 1.5." |
+| CHARLS 原始变量名 | `### Outcomes and Predictors` 段内 | "Gait speed (da049) was assessed by..." |
+
+**为什么限制 5 个子标题**: 这是 checklist→header 映射的根因。每项一个子标题 → Methods 碎片化为 8-12 块 → 读起来像 SOP 手册而非研究论文。JAMA/NEJM/Lancet 的 Methods 子标题数普遍在 4-6 之间，每个子标题是内容块而非检查项。
+
+**段落分隔**: 五个 `###` 子标题之间用空行分隔。每个子标题下为连贯段落，不嵌套更深层标题（禁止 `####`）。
+
+```
+## Methods
+
+### Study Design and Setting
+设计类型, 数据来源, 纳入时间范围, 报告指南.
+
+### Study Population
+纳入/排除标准(含理由), 样本量, 流程图引用.
+
+### Outcomes and Predictors
+结局定义与测量, 预测因子定义与来源. CHARLS 变量注明原始变量名.
+
+### Statistical Analysis
+正态性检验. 缺失率与处理. 模型/特征选择/验证策略. 软件+版本.
+
+### Sensitivity Analysis
+预设敏感性分析 ≥3 项.
+```
+
+### Results — 标准五段子标题流程
+
+Results 使用 `###` 子标题组织，按此顺序不可打乱，**仅限以下 5 个**：
+
+| # | 子标题 | 核心内容 | 对应数据源 |
+|---|--------|---------|-----------|
+| 1 | `### Study Population and Baseline Characteristics` | 筛选流程与最终 N, 基线表关键数字概述, 结局事件率 | Figure 1 + Table 1 |
+| 2 | `### Model Performance` | 主模型 AUC+95%CI, 校准度 (Brier Score / Calibration Slope), 区分度+校准度同时报告 | Table 2 + Figure 2/3 |
+| 3 | `### Feature Importance` | 特征重要性排序 (TOP 5-10), SHAP 方向, 关键特征与结局的关系 | Figure 4 |
+| 4 | `### Secondary and Subgroup Analyses` | 亚组 AUC, 交互检验 P 值, 次要终点, 模型比较 (DeLong test) | Table 3 |
+| 5 | `### Sensitivity Analyses` | ≥3 项敏感性分析结果, 与主分析方向是否一致 | SAP 预设项 |
+
+**🚫 子标题上限**: **禁止在 5 个标准子标题之外创建额外子标题**（如 `### Baseline Table` / `### ROC Curve` / `### Calibration` / `### SHAP Values` / `### Subgroup: Sex` 等）。每个标准子标题覆盖一类结果，图表放在对应的子标题段内引用。
+
+**内容规则**:
+- 每段开头一句概括该子标题的核心发现，再展开具体数字
+- 每个数字来自且仅来自上游输出 (cv_results.json / tables / figures)
+- AUC 必须带 95% CI；效应量+CI 一起报告
+- 连续变量: 正态用 mean±SD, 偏态用 median[IQR]；分类变量: n(%)
+- **不写解释性语言**（那是 Discussion 的事）
+- **不含文献引用**（Results 只报事实）
+- 每张表/图在文中被引用，不重复罗列表/图中的所有数字
+
+**段落分隔**: 五个 `###` 子标题之间用空行分隔。每个子标题下为连贯段落，不嵌套更深层标题（禁止 `####`）。
+
+```
+## Results
+
+### Study Population and Baseline Characteristics
+筛选流程 N, 基线关键数字, 事件率.
+
+### Model Performance
+AUC+CI, 校准度.
+
+### Feature Importance
+TOP 特征 + SHAP 方向.
+
+### Secondary and Subgroup Analyses
+亚组 AUC + 交互 P 值.
+
+### Sensitivity Analyses
+≥3 项敏感性分析, 方向一致性.
+```
 
 ### Introduction — 三段漏斗式
 
@@ -675,24 +739,24 @@ Humanize 检查清单 (负向过滤: 删 AI 词)
 - [ ] 书籍/会议论文已标注无 DOI
 - [ ] 验证报告已保存到 `checklists/doi-verification.md`
 - [ ] **参考文献数量达标**: 论著 (Original Article) ≥25 篇, 综述 (Review) ≥45 篇
+- [ ] **每篇参考文献必须在正文中被至少引用一次**: References 中的每个 [n] 必须在正文中出现。禁止为满足 recency≥80% 而堆砌近期但无关的文献。写完全文后，交叉检查 References 列表与正文引用，确保 1:1 对应。
+- [ ] **引用数量上限**: 论著 ≤40 篇, 综述 ≤60 篇 (超过上限说明存在堆砌)
 - [ ] **经典文献标注**: >5年的文献: 已在 `company/reference/classic-papers.md` 注册表 → 自动豁免; 不在注册表 → 必须加 `[Classic — 领域: 具体理由]`, 模糊理由禁止
 
 ### Methods 检查
-- [ ] 研究设计明确说明
+- [ ] 五大标准子标题完整 (Study Design / Population / Outcomes / Statistical Analysis / Sensitivity)
+- [ ] 无额外子标题 — 正态性检验、缺失处理、软件版本均已整合到 Statistical Analysis 段内
 - [ ] TRIPOD/STROBE 对齐
-- [ ] 样本量/功效报告
-- [ ] 连续变量正态性检验说明
-- [ ] 缺失率+处理方法报告
-- [ ] 模型假设检验
-- [ ] 软件+版本
+- [ ] Methods ↔ Results 1:1 对应
 
 ### Results 检查
+- [ ] 五大标准子标题完整且顺序正确 (Population / Performance / Features / Secondary / Sensitivity)
+- [ ] 无额外子标题 — 每个子标题是一类结果，非单张图/表
 - [ ] 所有表/图在文中被引用
-- [ ] AUC 带 95% CI
-- [ ] 效应量+CI 一起报告
+- [ ] AUC 带 95% CI + 效应量+CI 一起报告
 - [ ] 区分度+校准度同时报告
 - [ ] 亚组用交互检验非亚组内检验
-- [ ] 无解释性语言
+- [ ] 无解释性语言 / 无文献引用
 
 ### Discussion 检查
 - [ ] 无新结果
@@ -712,6 +776,8 @@ Humanize 检查清单 (负向过滤: 删 AI 词)
 - [ ] 无 DOI 的文献已标注为预印本/灰色文献/书籍
 - [ ] 引用格式符合目标期刊要求
 - [ ] 论著 ≥25 篇 / 综述 ≥45 篇 (不足则必须补充文献后再提交)
+- [ ] **每篇参考文献在正文中被引用**: References 的每个 [n] 必须在正文出现，禁止堆砌未引用文献
+- [ ] 论著 ≤40 篇 / 综述 ≤60 篇 (超过上限属堆砌嫌疑)
 
 ---
 
