@@ -38,7 +38,8 @@ class AgentPromptLoader:
         "shared/ml-engineer":         "shared-services/ml-engineer-agent.md",
         "shared/scientific-writer":   "shared-services/scientific-writer-agent.md",
         "shared/research-assistant":  "shared-services/research-assistant-agent.md",
-        "shared/humanizer":          "shared-services/humanizer-agent.md",
+        "shared/humanizer":             "shared-services/humanizer-agent.md",
+        "shared/clinical-tool-developer": "shared-services/clinical-tool-developer-agent.md",
     }
 
     FEWSHOT_REGISTRY = {
@@ -63,7 +64,8 @@ class AgentPromptLoader:
         "shared/ml-engineer":         "few-shot/geriatrics/ml-engineer.md",
         "shared/scientific-writer":   "few-shot/geriatrics/scientific-writer.md",
         "shared/research-assistant":  "few-shot/geriatrics/research-assistant.md",
-        "shared/humanizer":          "",   # 无需 few-shot, 规则来自 humanizer-rules.md
+        "shared/humanizer":             "",   # 无需 few-shot, 规则来自 humanizer-rules.md
+        "shared/clinical-tool-developer": "few-shot/geriatrics/clinical-tool-developer.md",  # 默认 geriatrics, urology 可在运行时指定
     }
 
     # ================================================================
@@ -82,6 +84,7 @@ class AgentPromptLoader:
         "scientific-writer":      "shared/scientific-writer",
         "research-assistant":     "shared/research-assistant",
         "humanizer":              "shared/humanizer",
+        "clinical-tool-developer": "shared/clinical-tool-developer",
     }
 
     # Legacy AGENT_FILES for backward compatibility
@@ -97,6 +100,7 @@ class AgentPromptLoader:
         "scientific-writer": "scientific-writer-agent.md",
         "research-assistant": "research-assistant-agent.md",
         "humanizer": "humanizer-agent.md",
+        "clinical-tool-developer": "clinical-tool-developer-agent.md",
     }
 
     def __init__(self, agents_dir: Path = None, company_dir: Path = None):
@@ -185,15 +189,57 @@ class AgentPromptLoader:
         content = re.sub(r'^# .*\n', '', content, count=1)
         return content.strip()
 
-    def load_fewshot(self, agent_id: str) -> str:
-        """加载 Agent 的 few-shot 示例"""
-        filepath = self._get_fewshot_path(agent_id)
+    def load_fewshot(self, agent_id: str, division: str = "") -> str:
+        """加载 Agent 的 few-shot 示例。支持按事业部选择 few-shot (如 urology vs geriatrics)。"""
+        filepath = self._get_fewshot_path(agent_id, division)
         if not filepath:
             return ""
 
         fewshot = filepath.read_text(encoding="utf-8")
         fewshot = re.sub(r'^# .*\n', '', fewshot, count=1)
         return "\n\n## Few-Shot Examples\n\n" + fewshot.strip()
+
+    def _get_fewshot_path(self, agent_id: str, division: str = "") -> Optional[Path]:
+        """Resolve few-shot file path, optionally division-specific.
+
+        优先级: division-specific (few-shot/{division}/{role}.md) > default registry > legacy
+        """
+        resolved = self._resolve_agent_id(agent_id)
+
+        if self.company_dir:
+            # 1. 尝试事业部特定 few-shot
+            if division:
+                div_fewshot = f"few-shot/{division}/{resolved.split('/')[-1]}.md"
+                filepath = self.company_dir / div_fewshot
+                if filepath.exists():
+                    return filepath
+
+            # 2. Fall back to default FEWSHOT_REGISTRY
+            relative = self.FEWSHOT_REGISTRY.get(resolved)
+            if relative:
+                filepath = self.company_dir / relative
+                if filepath.exists():
+                    return filepath
+
+        # 3. Legacy fallback
+        if self.agents_dir:
+            legacy_fewshot = {
+                "pi": "few-shot/pi.md",
+                "computational-biologist": "few-shot/computational-biologist.md",
+                "clinical-researcher": "few-shot/clinical-researcher.md",
+                "ml-engineer": "few-shot/ml-engineer.md",
+                "biostatistician": "few-shot/biostatistician.md",
+                "data-engineer": "few-shot/data-engineer.md",
+                "scientific-writer": "few-shot/scientific-writer.md",
+                "research-assistant": "few-shot/research-assistant.md",
+                "orchestrator": "few-shot/orchestrator.md",
+            }.get(agent_id, "")
+            if legacy_fewshot:
+                filepath = self.agents_dir / legacy_fewshot
+                if filepath.exists():
+                    return filepath
+
+        return None
 
     # ================================================================
     # 路径占位符注入 — 将 {PLACEHOLDER} 替换为运行时实际路径
@@ -232,11 +278,18 @@ class AgentPromptLoader:
                 result = result.replace(ph, resolved)
         return result
 
-    def load_full_prompt(self, agent_id: str, include_fewshot: bool = True) -> str:
-        """加载 Agent 的完整 prompt (system + few-shot), 自动注入实际路径"""
+    def load_full_prompt(self, agent_id: str, include_fewshot: bool = True,
+                         division: str = "") -> str:
+        """加载 Agent 的完整 prompt (system + few-shot), 自动注入实际路径。
+
+        Args:
+            agent_id: Agent 标识符 (如 "shared/clinical-tool-developer")
+            include_fewshot: 是否包含 few-shot 示例
+            division: 事业部 (如 "urology"), 用于选择事业部特定 few-shot
+        """
         system = self.load_system_prompt(agent_id)
         if include_fewshot:
-            fewshot = self.load_fewshot(agent_id)
+            fewshot = self.load_fewshot(agent_id, division=division)
             system += fewshot
         # 运行时注入实际路径
         return self._inject_paths(system)

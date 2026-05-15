@@ -561,7 +561,7 @@ class TestEndToEndAcceptance:
 
     def test_full_project_with_all_modules(self):
         """
-        场景: 启动新项目 → 完整走完 7 个 Phase
+        场景: 启动新项目 → 完整走完 8 个 Phase
         
         验证点:
         1. Phase 0 SDS 包含系统辨识预测数据

@@ -11,6 +11,7 @@
 | `shared/ml-engineer` | 机器学习工程 | 模型实现与调优、特征工程、MLOps、可解释性报告 | 全部 |
 | `shared/scientific-writer` | 学术写作 | 论文 IMRaD 撰写、润色、投稿准备、DOI 验证 | 全部 |
 | `shared/research-assistant` | 科研辅助 | 文献检索与综述 (PRISMA 2020)、EDA、基线实验 | 全部 |
+| `shared/clinical-tool-developer` | 临床工具开发 | 预测模型临床部署、Streamlit Web 工具生成、可执行文件打包 | 全部 |
 
 ## 服务调度机制
 
@@ -41,3 +42,4 @@
 | 模型训练 + 评估 | ≤ 5 个工作日 |
 | 论文初稿 | ≤ 7 个工作日 |
 | 文献综述 | ≤ 5 个工作日 |
+| 临床工具部署 | ≤ 3 个工作日 |

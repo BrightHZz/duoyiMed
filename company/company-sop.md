@@ -91,6 +91,7 @@
 | 模型训练 + 评估 | 5 工作日 | 3 工作日 | 基线 + 主模型 + 可解释性 |
 | 论文初稿 | 7 工作日 | 4 工作日 | IMRaD 完整 + DOI 验证 |
 | 文献综述 | 5 工作日 | 3 工作日 | PRISMA 2020 + ≥20 篇文献 |
+| 临床工具部署 | 3 工作日 | 1.5 工作日 | 模型加载 + Streamlit 应用 + 打包验证 |
 
 ### 3.2 调度优先级
 
@@ -109,13 +110,14 @@
 
 ### 4.2 阶段门控
 
-所有事业部统一遵循七阶段门控（含 Phase 0 总体设计）：
+所有事业部统一遵循八阶段门控（含 Phase 0 总体设计）：
 
 ```
-Phase 0 (总体设计) → Phase 1 (问题定义) → Gate 1 → Phase 2 (方案设计) → Gate 2 → Phase 3 (执行/内部验证) → Gate 3 → Phase 4 (外部验证) → Gate 4 → Phase 5 (审查) → Gate 5 → Phase 6 (产出/论文撰写)
+Phase 0 (总体设计) → Phase 1 (问题定义) → Gate 1 → Phase 2 (方案设计) → Gate 2 → Phase 3 (执行/内部验证) → Gate 3 → Phase 4 (外部验证) → Gate 4 → Phase 5 (审查) → Gate 5 → Phase 6 (产出/论文撰写) → Gate 6 → Phase 7 (临床工具部署) → Gate 7
 ```
 
 Phase 0 由编排器自身执行总体设计师角色，产出《系统设计说明书》(SDS)，定义子系统分解、接口规范、反馈触发条件和关键假设风险，为后续所有 Phase 提供蓝图。
+Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化为临床医生可用的交互式 Web 工具并打包为独立可执行文件。
 
 ⚠️ 关键约束: 外部验证 (Phase 4) 必须在论文撰写 (Phase 6) 之前，不可颠倒。
 
@@ -181,6 +183,18 @@ Phase 0 由编排器自身执行总体设计师角色，产出《系统设计说
 | 21 | Discussion 四段完整 | auto | ¶1-¶4 空行分隔，¶4 无结论性收束句 |
 | 22 | Methods↔Results 1:1 | llm | PI 确认无遗漏 |
 | 23 | 数值可追溯 | llm | 所有数字标注来源 Agent |
+
+#### Gate 7 — 临床工具部署
+
+| # | 检查项 | 类型 | 通过标准 |
+|---|--------|------|---------|
+| 1 | 模型可加载 | auto | model_info.json 存在, 模型可正常加载和预测 |
+| 2 | 特征映射完整 | auto | feature_config.json 每个特征含 clinical_name, 数量匹配模型输入 |
+| 3 | Streamlit 应用可启动 | auto | supplements/app.py 存在, streamlit run 正常启动 |
+| 4 | 部署文件完整 | auto | requirements.txt + Dockerfile + README.md + run_webapp.py 均存在 |
+| 5 | 安全免责声明 | auto | app.py 含安全免责声明 |
+| 6 | 输入分组合理 | llm | clinical-tool-developer 确认输入表单按临床逻辑分组 |
+| 7 | 打包脚本可用 | auto | build_exe.py 存在, PyInstaller 打包命令可执行 |
 
 #### 闸门状态与编排器行为
 
