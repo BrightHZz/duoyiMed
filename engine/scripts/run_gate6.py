@@ -113,10 +113,14 @@ class DummyOrchestrator:
         self._current_project_id = project_id
 
         # 模拟 kb 接口
+        # vault_path 应为项目目录的祖父目录 (例如 laoNianYiXue/),
+        # 使得 vault_path/projects/project_id = project_dir
+        vault_path = project_dir.parent.parent
+
         class FakeKB:
             class FakeVaults:
                 def items(self):
-                    return [("main", str(project_dir.parent))]
+                    return [("main", str(vault_path))]
             vaults = FakeVaults()
         self.kb = FakeKB()
 

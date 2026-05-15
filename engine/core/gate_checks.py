@@ -70,6 +70,52 @@ def check_data_availability_confirmed(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 data-engineer 输出)"
 
 
+def check_data_dictionary_exists(outputs: dict, orch) -> tuple:
+    """数据字典已产出: data/data_dictionary.md 存在且包含分类变量编码→标签映射
+
+    防止 generate_tables.py 自行推测/硬编码分类标签导致定义错误传播到全文。
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    dict_file = proj_dir / 'data' / 'data_dictionary.md'
+    if not dict_file.exists():
+        return False, (
+            "data/data_dictionary.md 不存在 — "
+            "data-engineer 必须产出中英双语数据字典, 包含所有分类变量的编码→标签映射"
+        )
+
+    try:
+        content = dict_file.read_text(encoding='utf-8')
+    except OSError:
+        return False, "data/data_dictionary.md 无法读取"
+
+    # 验证基本结构: 至少有一个分类变量定义了 code_value → label 映射
+    # 检测 Markdown 表格格式: | var_name | code | label_en | ...
+    has_table = bool(re.search(r'\|.*variable.*\|.*code.*\|.*label', content, re.IGNORECASE))
+    has_rows = len(re.findall(r'^\|', content, re.MULTILINE)) >= 3  # header + separator + ≥1 row
+
+    if not has_table or not has_rows:
+        return False, (
+            "data/data_dictionary.md 格式不正确 — "
+            "须包含 Markdown 表格: | variable_name | code_value | label_en | label_zh | source_column |"
+        )
+
+    # 检查是否覆盖了项目中的分类变量 (扫描 outputs/ 目录的特征文件)
+    var_names = set(re.findall(r'^\|\s*`?(\w+)`?\s*\|', content, re.MULTILINE))
+    if len(var_names) < 2:  # 至少 2 个变量 (header 被误匹配的容错)
+        return False, "data/data_dictionary.md 表格为空或变量数 < 2"
+
+    return True, f"数据字典存在 ✓ ({len(var_names)} 个变量已定义编码→标签映射)"
+
+
 # --- Phase 3: 内部验证 ---
 
 def check_auc_threshold(outputs: dict, orch) -> tuple:
@@ -219,7 +265,8 @@ def check_all_models_evaluated_completely(outputs: dict, orch) -> tuple:
 
     # 读取 cv_results.json
     cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
-               list(proj_dir.glob('data/cv_results.json'))
+               list(proj_dir.glob('data/cv_results.json')) + \
+               list(proj_dir.glob('outputs/cv_results.json'))
     if not cv_paths:
         return True, "跳过 (未找到 cv_results.json)"
 
@@ -446,6 +493,165 @@ def check_doi_verification(outputs: dict, orch) -> tuple:
                 return False, "存在 fake DOI, 须替换后重新验证"
             return True, "DOI 验证通过 (fake=0)"
     return True, "跳过 (无 scientific-writer 输出)"
+
+
+def check_doi_title_match(outputs: dict, orch) -> tuple:
+    """DOI 标题一致性检查 — 验证每个 DOI 解析到的论文标题与引用标题是否匹配。
+
+    调用 CrossRef API 获取 DOI 对应的真实标题，与被引标题做模糊匹配。
+    similarity < 0.7 → FAIL (DOI 指向不同论文)
+    0.7 ≤ similarity < 0.85 → COND_PASS (待人工确认)
+    similarity ≥ 0.85 → PASS
+    """
+    import difflib
+    import html as html_mod
+    import urllib.request, urllib.error
+    import json as _json
+    from pathlib import Path
+
+    # 找到项目目录 (outputs 中可能包含 project_dir)
+    project_dir = None
+    for _, output in outputs.items():
+        if isinstance(output, str) and "project_dir" not in output.lower():
+            continue
+    # 从 orch 获取 project_dir
+    if hasattr(orch, 'project_dir'):
+        project_dir = Path(orch.project_dir)
+    elif hasattr(orch, 'config') and hasattr(orch.config, 'project_dir'):
+        project_dir = Path(orch.config.project_dir)
+
+    if not project_dir:
+        return True, "跳过 (无法确定 project_dir)"
+
+    refs_file = project_dir / "sections" / "08_references.md"
+    if not refs_file.exists():
+        return True, "跳过 (08_references.md 不存在)"
+
+    refs_text = refs_file.read_text()
+
+    # 逐条解析引用: {ref_num, cited_title, doi}
+    refs = []
+    lines = refs_text.split('\n')
+    for line in lines:
+        m = re.match(r'^(\d+)\.\s+', line)
+        if not m:
+            continue
+        ref_num = int(m.group(1))
+        # 提取 DOI
+        doi_m = re.search(r'(10\.\d{4,}/[^\s"\']+)', line)
+        if not doi_m:
+            continue
+        doi = doi_m.group(1).rstrip('.').rstrip(',')
+        # 提取被引标题: 位于 "et al. " 或 ". " 之后，到 ". <Journal>" 之前
+        # 模式: Authors . Title text . Journal ...
+        cited_title = None
+        # Strip authors part: everything before and including "et al. " or last author pattern
+        title_match = re.match(
+            r'^\d+\.\s+'           # ref number
+            r'(?:[A-Z][a-z]+\s+[A-Z]\.?,?\s*)+'  # author surnames + initials
+            r'(?:et al\.?\s*)?'    # optional et al
+            r'[.\s]*'              # separator
+            r'(.+?)'               # TITLE (captured)
+            r'\.\s+'               # period + space
+            r'[A-Z][a-z]+'         # Journal name start (capitalized)
+            , line)
+        if title_match:
+            cited_title = title_match.group(1).strip()
+        else:
+            # Fallback: try to extract between ". " after et al and ". " before journal
+            # Simpler approach: find the title between two significant periods
+            parts = re.split(r'\.\s+(?=[A-Z])', line)
+            if len(parts) >= 3:
+                # parts[0] = ref num + authors, parts[1] = title, parts[2:] = journal etc
+                cited_title = parts[1].strip()
+
+        if cited_title:
+            # Clean the title
+            cited_title = re.sub(r'\[Classic[^]]*\]', '', cited_title).strip()
+            cited_title = re.sub(r'\s+', ' ', cited_title)
+            refs.append({
+                "num": ref_num,
+                "cited_title": cited_title,
+                "doi": doi,
+            })
+
+    if not refs:
+        return True, "跳过 (未解析到带 DOI 的引用)"
+
+    # 连通性探针 — CrossRef 不可达时优雅降级
+    try:
+        probe_url = "https://api.crossref.org/works/10.1001/jama.2017.18391"
+        probe_req = urllib.request.Request(probe_url, headers={"User-Agent": "CMRC-GateCheck/1.0"})
+        urllib.request.urlopen(probe_req, timeout=5)
+        crossref_ok = True
+    except Exception:
+        crossref_ok = False
+
+    if not crossref_ok:
+        return True, f"CrossRef API 不可达 ({len(refs)} DOI 待验证, 仅依赖 check_doi_verification)"
+
+    # 逐 DOI 调用 CrossRef
+    mismatches = []
+    errors = []
+    for ref in refs:
+        doi = ref["doi"]
+        url = f"https://api.crossref.org/works/{doi}"
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "CMRC-GateCheck/1.0 (mailto:research@example.com)"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = _json.loads(resp.read().decode())
+            msg = data.get("message", {})
+            crossref_title = msg.get("title", [""])[0]
+            if not crossref_title:
+                errors.append(f"[{ref['num']}] DOI {doi}: CrossRef 无标题数据")
+                continue
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                errors.append(f"[{ref['num']}] DOI {doi}: CrossRef 404 (fake DOI)")
+            else:
+                errors.append(f"[{ref['num']}] DOI {doi}: HTTP {e.code}")
+            continue
+        except Exception as e:
+            errors.append(f"[{ref['num']}] DOI {doi}: {str(e)[:80]}")
+            continue
+
+        # 标题归一化比较
+        cited_clean = html_mod.unescape(ref["cited_title"]).lower()
+        crossref_clean = html_mod.unescape(crossref_title).lower()
+        # 去标点、规范化空格
+        for ch in '.,;:()[]{}"\'!?-':
+            cited_clean = cited_clean.replace(ch, ' ')
+            crossref_clean = crossref_clean.replace(ch, ' ')
+        cited_clean = ' '.join(cited_clean.split())
+        crossref_clean = ' '.join(crossref_clean.split())
+
+        similarity = difflib.SequenceMatcher(None, cited_clean, crossref_clean).ratio()
+
+        if similarity < 0.7:
+            mismatches.append(
+                f"[{ref['num']}] cited=\"{ref['cited_title'][:100]}\" "
+                f"CrossRef=\"{crossref_title[:100]}\" sim={similarity:.2f}"
+            )
+        elif similarity < 0.85:
+            mismatches.append(
+                f"[{ref['num']}] LOW sim={similarity:.2f}: "
+                f"cited=\"{ref['cited_title'][:80]}\" vs CrossRef=\"{crossref_title[:80]}\""
+            )
+
+    # 判定
+    if mismatches:
+        fail_count = sum(1 for m in mismatches if "sim=" in m and float(re.search(r'sim=([\d.]+)', m).group(1)) < 0.7)
+        if fail_count > 0:
+            return False, f"DOI-标题不匹配 ({fail_count} FAIL): {'; '.join(mismatches[:5])}"
+        return False, f"DOI-标题低相似 ({len(mismatches)} COND_PASS): {'; '.join(mismatches[:3])}"
+
+    if errors:
+        return True, f"标题匹配通过 (DOI 解析: {len(refs)-len(errors)} OK, {len(errors)} 网络/API 错误, 委托 check_doi_verification)"
+
+    return True, f"DOI-标题匹配通过 ({len(refs)}/{len(refs)} similarity ≥ 0.85)"
 
 
 def check_ref_count(outputs: dict, orch) -> tuple:
@@ -707,29 +913,67 @@ def check_all_refs_cited_in_text(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 scientific-writer 输出)"
 
 
-def check_discussion_four_paragraphs(outputs: dict, orch) -> tuple:
-    """Discussion 四段完整 (¶1-¶4 空行分隔)"""
+def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
+    """Discussion 七段结构检测 — 按空行拆段, ≥6段 + ¶3/¶4含文献引用 + ¶7含局限"""
     for agent_id, output in outputs.items():
-        if "scientific-writer" in agent_id.lower():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             if "## Discussion" not in output:
                 return True, "跳过 (无 Discussion 章节)"
-            # 不强制计数, 检查是否有明确的段落结构
-            has_findings = any(kw in output for kw in ["主要发现", "principal finding", "main finding"])
-            has_comparison = any(kw in output for kw in ["文献", "compar", "consistent", "previous"])
-            has_implications = any(kw in output for kw in ["临床", "clinical", "implication", "public health"])
-            has_limitations = any(kw in output for kw in ["局限", "limitation", "优势", "strength"])
-            passed = [has_findings, has_comparison, has_implications, has_limitations]
-            count = sum(passed)
-            if count >= 3:
-                return True, f"Discussion 段落完整 ({count}/4 要素检测到)"
-            return False, f"Discussion 段落不完整 (仅 {count}/4 要素)"
-    return True, "跳过 (无 scientific-writer 输出)"
+
+            # 提取 Discussion 内容
+            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            if not disc_match:
+                return True, "跳过"
+            disc = disc_match.group(1)
+
+            # 按空行拆段 (≥2个连续换行)
+            paragraphs = re.split(r'\n{2,}', disc.strip())
+            paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+            if len(paragraphs) < 6:
+                return False, (
+                    f"Discussion 仅 {len(paragraphs)} 段空行分隔, 需 ≥6 段 "
+                    f"(七段式: ¶1核心发现/¶2机制解释/¶3文献一致/¶4文献不一致/¶5含义/¶6优势/¶7局限+未来方向)"
+                )
+
+            # 检测文献引用是否集中在中段 (¶2-¶5 ≈ literature comparison area)
+            # Discussion 必须包含文献引用, 但不在 ¶1 强制检查
+            has_citations = bool(re.search(r'\[\d+', disc))
+            if not has_citations:
+                return False, "Discussion 未检测到任何文献引用 — 文献对比 (¶3/¶4) 必须引用文献"
+
+            # 检测末段是否含局限相关关键词
+            last_para = paragraphs[-1]
+            has_limitations = bool(
+                re.search(r'limitation|局限|limitation|limitations', last_para, re.I)
+            )
+            if not has_limitations:
+                return False, "Discussion 末段 (¶7) 应包含局限性讨论"
+
+            # 检测是否有机制解释区域 (¶2)
+            # 在前 1/3 区域内搜索 mechanism/explain/interpret/pathway
+            first_third_idx = max(1, len(paragraphs) // 3)
+            early_content = '\n'.join(paragraphs[:first_third_idx])
+            has_explanation = bool(re.search(
+                r'mechanism|pathway|explanation|explain|interpret|'
+                r'may reflect|one possible|likely reflects|'
+                r'可能机制|可能原因|解释',
+                early_content, re.I
+            ))
+            if not has_explanation:
+                return False, (
+                    "Discussion 前段 (¶2 区域) 应包含发现解读/机制解释 "
+                    "(mechanism/explanation/pathway/may reflect...)"
+                )
+
+            return True, f"Discussion 七段结构检测通过 ({len(paragraphs)} 段空行分隔)"
+    return True, "跳过"
 
 
-def check_discussion_p4_no_conclusion(outputs: dict, orch) -> tuple:
-    """Discussion ¶4 末尾无结论性收束句"""
+def check_discussion_last_para_no_conclusion(outputs: dict, orch) -> tuple:
+    """Discussion 末段 (¶7) 末尾无结论性收束句 — 以局限缓解说明+未来方向收尾, 不加总结标语"""
     for agent_id, output in outputs.items():
-        if "scientific-writer" in agent_id.lower():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             if "## Discussion" not in output:
                 return True, "跳过"
             # 提取 Discussion 到 Conclusion 之间的内容
@@ -738,18 +982,59 @@ def check_discussion_p4_no_conclusion(outputs: dict, orch) -> tuple:
                 return True, "跳过"
             disc_content = disc_match.group(1)
 
-            # 检查 ¶4 区域 (最后一段) 是否有结论性收束
+            # 检查 Discussion 末段是否有结论性收束
             prohibited = [
                 "In conclusion", "Taken together", "Overall", "In summary",
                 "我们的研究表明", "综上所述", "总而言之",
                 "paving the way", "ushering in", "highlighting the potential",
             ]
-            # 取 Discussion 最后 500 字符 (¶4 区域)
+            # 取 Discussion 最后 500 字符 (末段区域)
             last_part = disc_content[-500:] if len(disc_content) > 500 else disc_content
             for phrase in prohibited:
                 if phrase.lower() in last_part.lower():
-                    return False, f"Discussion ¶4 末尾含结论性短语: '{phrase}'"
-            return True, "Discussion ¶4 无结论性收束句"
+                    return False, f"Discussion 末段 (¶7) 含结论性收束短语: '{phrase}'"
+            return True, "Discussion 末段无结论性收束句 ✓"
+    return True, "跳过"
+
+
+def check_discussion_explanation_section(outputs: dict, orch) -> tuple:
+    """Discussion ¶2 区域包含发现解读/机制解释 — 对齐 JAMA Editors Guide §2 'Possible explanations'"""
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
+            if "## Discussion" not in output:
+                return True, "跳过 (无 Discussion 章节)"
+            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            if not disc_match:
+                return True, "跳过"
+            disc = disc_match.group(1)
+
+            # 按空行拆段
+            paragraphs = re.split(r'\n{2,}', disc.strip())
+            paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+            if len(paragraphs) < 3:
+                return True, "跳过 (段落数不足)"
+
+            # 在前 1/3 区域搜索机制解释关键词
+            first_third_idx = max(1, len(paragraphs) // 3)
+            early_content = '\n'.join(paragraphs[:first_third_idx])
+
+            explanation_patterns = [
+                r'\bmechanism', r'\bpathway', r'\bexplanation', r'\bexplain',
+                r'\binterpret', r'may reflect', r'likely reflects',
+                r'one possible', r'alternative explanation',
+                r'\b可能机制', r'\b可能原因', r'\b解释',
+                r'role of', r'mediated by', r'attributable to',
+            ]
+            has_explanation = any(
+                re.search(pat, early_content, re.I) for pat in explanation_patterns
+            )
+            if has_explanation:
+                return True, "Discussion ¶2 区域含机制解释 ✓"
+            return False, (
+                "Discussion 前段 (¶2 区域) 缺少发现解读/机制解释. "
+                "应讨论最可能的解释和替代解释 (JAMA §2 'Possible explanations')"
+            )
     return True, "跳过"
 
 
@@ -758,7 +1043,7 @@ def check_discussion_p4_no_conclusion(outputs: dict, orch) -> tuple:
 # ============================================================
 
 def check_discussion_no_subheadings(outputs: dict, orch) -> tuple:
-    """Discussion 不含 ### 子标题 — 四段靠逻辑过渡衔接, 不拆分小节"""
+    """Discussion 不含任何形式子标题 — 七段靠逻辑过渡衔接 (2026-05-14 强化: 5种模式全覆盖)"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             if "## Discussion" not in output:
@@ -768,15 +1053,38 @@ def check_discussion_no_subheadings(outputs: dict, orch) -> tuple:
             if not disc_match:
                 return True, "跳过"
             disc_content = disc_match.group(1)
-            # 检测 ### 子标题
-            sub_headings = re.findall(r'^### (.+)$', disc_content, re.MULTILINE)
-            if sub_headings:
-                h_list = '", "'.join(sub_headings)
+
+            # 模式1: ### 子标题
+            h3 = re.findall(r'^### (.+)$', disc_content, re.MULTILINE)
+            if h3:
+                return False, f"Discussion 含 ### 子标题: {h3}"
+
+            # 模式2: **粗体行** 作为伪子标题 (≤6 词的独立行) — 2026-05-14 新增
+            bold_lines = re.findall(r'^\*\*(.+?)\*\*\s*$', disc_content, re.MULTILINE)
+            fake_headings = [b.strip() for b in bold_lines if len(b.split()) <= 6]
+            if fake_headings:
                 return False, (
-                    f'Discussion 包含 {len(sub_headings)} 个 ### 子标题: '
-                    f'"{h_list}". Discussion 应四段靠逻辑过渡衔接, 不使用小标题'
+                    f"Discussion 含粗体伪子标题: {fake_headings}. "
+                    f"七段应仅靠空行分隔, 不使用任何标记标示段落名称"
                 )
-            return True, "Discussion 无 ### 子标题 ✓"
+
+            # 模式3: ___ 下划线分隔符 (≥3 个连续下划线独立成行)
+            if re.search(r'^_{3,}\s*$', disc_content, re.MULTILINE):
+                return False, "Discussion 含下划线分隔符 (疑似子标题标记)"
+
+            # 模式4: 全大写段名行 (如 "PRINCIPAL FINDINGS" / "LIMITATIONS")
+            caps = re.findall(r'^([A-Z][A-Z\s]{4,})$', disc_content, re.MULTILINE)
+            # 排除常见的全大写缩写行 (如 "AUC" / "SHAP")
+            caps = [c for c in caps if len(c.split()) >= 2]
+            if caps:
+                return False, f"Discussion 含全大写段名: {caps}"
+
+            # 模式5: 编号段名 (如 "1. Findings" / "2. Literature Comparison")
+            numbered = re.findall(r'^(\d+\.\s+\w.{2,})$', disc_content, re.MULTILINE)
+            if numbered:
+                return False, f"Discussion 含编号段名: {numbered}"
+
+            return True, "Discussion 无任何形式子标题 ✓"
     return True, "跳过"
 
 
@@ -966,34 +1274,203 @@ def check_software_version_reported(outputs: dict, orch) -> tuple:
     return True, "跳过"
 
 
+def _find_project_dir(orch, project_id: str):
+    """在 knowledge base vaults 中定位项目目录"""
+    from pathlib import Path
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _read_section_from_disk(project_dir, keyword: str) -> tuple:
+    """从 sections/ 目录读取指定章节内容。
+    返回 (file_path, section_body) 或 (None, None)。
+    keyword: 'method' → 匹配 04_methods.md, 'result' → 匹配 05_results.md
+    """
+    from pathlib import Path
+    sections_dir = project_dir / 'sections'
+    if not sections_dir.exists():
+        return None, None
+
+    # 按文件名关键词匹配
+    for f in sorted(sections_dir.glob('*.md')):
+        if keyword in f.name.lower():
+            try:
+                content = f.read_text(encoding='utf-8')
+                # 提取 ## Methods / ## Results 章节体
+                heading_pattern = {
+                    'method': r'^## Methods?\s*\n',
+                    'result': r'^## Results?\s*\n',
+                }
+                pattern = heading_pattern.get(keyword, r'^## .*?\s*\n')
+                m = re.search(
+                    pattern + r'(.*?)(?=\n## [A-Z]|\Z)',
+                    content, re.DOTALL | re.MULTILINE
+                )
+                if m:
+                    return f, m.group(1)
+                # fallback: 如果章节标题匹配失败, 返回全文
+                return f, content
+            except OSError:
+                return None, None
+    return None, None
+
+
 def check_methods_excessive_subsections(outputs: dict, orch) -> tuple:
-    """Methods 子标题不超过 5 个(五大标准段落), 防止 checklist→header 映射导致章节碎片化"""
-    for agent_id, output in outputs.items():
-        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            m = re.search(r'## Methods?\s*\n(.*?)(?=\n## [A-Za-z]|\Z)', output, re.DOTALL)
-            if not m:
-                return True, "跳过"
-            methods_section = m.group(1)
-            subsections = re.findall(r'^###\s', methods_section, re.MULTILINE)
-            if len(subsections) > 5:
-                return False, f"Methods 有 {len(subsections)} 个 ### 子标题, 超过上限 5。请将额外内容(如正态性检验/缺失处理/软件版本)整合到五大标准段落中"
-            return True, f"Methods 子标题数 {len(subsections)} ✓"
-    return True, "跳过"
+    """Methods 子标题不超过 5 个(五大标准段落), 防止 checklist→header 映射导致章节碎片化
+
+    从 sections/ 磁盘文件读取(源真值), 而非依赖 Agent 输出文本。
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    filepath, methods_body = _read_section_from_disk(proj_dir, 'method')
+    if methods_body is None:
+        return True, "跳过 (找不到 Methods section 文件)"
+
+    # 提取所有 ### 子标题行
+    subs = re.findall(r'^###\s+(.+)$', methods_body, re.MULTILINE)
+
+    # 使用小写子串匹配，容忍单复数/措辞变体
+    METHODS_STANDARD = [
+        "study design",
+        "study population",
+        "outcome",           # covers "Outcomes and Predictors", "Outcome Definition"
+        "statistical analysis",
+        "sensitivity",       # covers "Sensitivity Analysis/Analyses", "Subgroup and Sensitivity Analyses"
+    ]
+
+    def _is_standard(sub: str) -> bool:
+        return any(kw in sub.lower() for kw in METHODS_STANDARD)
+
+    if len(subs) > 5:
+        # 分类: 哪些是标准的, 哪些是多余的
+        matched_std = []
+        extra = []
+        for s in subs:
+            s_clean = s.strip()
+            if _is_standard(s_clean):
+                matched_std.append(s_clean)
+            else:
+                extra.append(s_clean)
+
+        # 为每个多余子标题给出合并建议
+        merge_hints = []
+        for e in extra:
+            if any(kw in e.lower() for kw in ['population', 'inclusion', 'exclusion', 'cohort', 'dependency']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Study Population")
+            elif any(kw in e.lower() for kw in ['outcome', 'endpoint', 'frailty index', 'efi', 'definition']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Outcomes and Predictors")
+            elif any(kw in e.lower() for kw in ['feature', 'model tier', 'model development', 'validation', 'incremental', 'temporal', 'interpretation', 'shap']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Statistical Analysis")
+            elif any(kw in e.lower() for kw in ['ethic', 'reproducib', 'data availab']):
+                merge_hints.append(f"    - \"{e}\" → 移到 Declarations 或单独的 Ethics Statement")
+            elif any(kw in e.lower() for kw in ['reference', 'cited']):
+                merge_hints.append(f"    - \"{e}\" → 移除 (References 不应出现在 Methods 内)")
+            else:
+                merge_hints.append(f"    - \"{e}\" → 合并到五大标准段落之一或删除")
+
+        hints_text = "\n".join(merge_hints) if merge_hints else "  请将额外内容整合到五大标准段落中"
+
+        return False, (
+            f"Methods 有 {len(subs)} 个 ### 子标题, 超过上限 5。\n"
+            f"  当前子标题 ({len(subs)} 个): {subs}\n"
+            f"  合并建议:\n{hints_text}"
+        )
+
+    if len(subs) < 5:
+        covered = {kw for kw in METHODS_STANDARD if any(kw in s.lower() for s in subs)}
+        missing = [kw for kw in METHODS_STANDARD if kw not in covered]
+        return False, (
+            f"Methods 仅有 {len(subs)} 个 ### 子标题, 缺少标准段落: {missing}"
+        )
+
+    return True, f"Methods 子标题数 {len(subs)} ✓ (标准五段)"
 
 
 def check_results_excessive_subsections(outputs: dict, orch) -> tuple:
-    """Results 子标题不超过 5 个(五大标准段落), 防止 ad-hoc 碎片化"""
-    for agent_id, output in outputs.items():
-        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            m = re.search(r'## Results?\s*\n(.*?)(?=\n## [A-Za-z]|\Z)', output, re.DOTALL)
-            if not m:
-                return True, "跳过"
-            results_section = m.group(1)
-            subsections = re.findall(r'^###\s', results_section, re.MULTILINE)
-            if len(subsections) > 5:
-                return False, f"Results 有 {len(subsections)} 个 ### 子标题, 超过上限 5。请按标准五段流程组织 (Population / Performance / Features / Secondary / Sensitivity)，禁止为单张图/表创建独立子标题"
-            return True, f"Results 子标题数 {len(subsections)} ✓"
-    return True, "跳过"
+    """Results 子标题不超过 5 个(五大标准段落), 防止 ad-hoc 碎片化
+
+    从 sections/ 磁盘文件读取(源真值), 而非依赖 Agent 输出文本。
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    filepath, results_body = _read_section_from_disk(proj_dir, 'result')
+    if results_body is None:
+        return True, "跳过 (找不到 Results section 文件)"
+
+    subs = re.findall(r'^###\s+(.+)$', results_body, re.MULTILINE)
+
+    RESULTS_STANDARD = [
+        "study population",
+        "model performance",
+        "feature importance",
+        "secondary and subgroup",
+        "sensitivity",
+    ]
+
+    def _is_standard(sub: str) -> bool:
+        return any(kw in sub.lower() for kw in RESULTS_STANDARD)
+
+    if len(subs) > 5:
+        matched_std = []
+        extra = []
+        for s in subs:
+            s_clean = s.strip()
+            if _is_standard(s_clean):
+                matched_std.append(s_clean)
+            else:
+                extra.append(s_clean)
+
+        merge_hints = []
+        for e in extra:
+            if any(kw in e.lower() for kw in ['population', 'baseline', 'flow', 'cohort']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Study Population and Baseline Characteristics")
+            elif any(kw in e.lower() for kw in ['auc', 'performance', 'roc', 'calibration', 'discrimination', 'brier']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Model Performance")
+            elif any(kw in e.lower() for kw in ['feature', 'importance', 'shap', 'predictor', 'coefficient']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Feature Importance and Model Interpretation")
+            elif any(kw in e.lower() for kw in ['subgroup', 'secondary', 'sex', 'age', 'stratif']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Secondary and Subgroup Analyses")
+            elif any(kw in e.lower() for kw in ['sensitivity', 'robust']):
+                merge_hints.append(f"    - \"{e}\" → 合并到 ### Sensitivity Analyses")
+            else:
+                merge_hints.append(f"    - \"{e}\" → 合并到五大标准段落之一或删除")
+
+        hints_text = "\n".join(merge_hints) if merge_hints else "  请将额外结果按标准五段流程组织"
+
+        return False, (
+            f"Results 有 {len(subs)} 个 ### 子标题, 超过上限 5。\n"
+            f"  当前子标题 ({len(subs)} 个): {subs}\n"
+            f"  合并建议:\n{hints_text}"
+        )
+
+    if len(subs) < 5:
+        covered = {kw for kw in RESULTS_STANDARD if any(kw in s.lower() for s in subs)}
+        missing = [kw for kw in RESULTS_STANDARD if kw not in covered]
+        return False, (
+            f"Results 仅有 {len(subs)} 个 ### 子标题, 缺少标准段落: {missing}"
+        )
+
+    return True, f"Results 子标题数 {len(subs)} ✓ (标准五段)"
 
 
 # ============================================================
@@ -1108,8 +1585,8 @@ def check_humanize_quality(outputs: dict, orch) -> tuple:
             if coda_hits:
                 violations.append(f"终结标语/弱写法: {', '.join(coda_hits)}")
 
-            # --- 4. Hedge 密度 (Discussion ¶3 + Conclusion 区域) ---
-            # 提取 Discussion ¶3 (临床含义段落) 和 Conclusion
+            # --- 4. Hedge 密度 (Discussion ¶5 临床含义段 + Conclusion) ---
+            # 提取 Discussion ¶5 (临床含义段落) 和 Conclusion
             disc_match = re.search(
                 r'## Discussion\n(.*?)(?=## Conclusion|\Z)',
                 output, re.DOTALL
@@ -1127,16 +1604,16 @@ def check_humanize_quality(outputs: dict, orch) -> tuple:
 
             if disc_match:
                 disc_content = disc_match.group(1)
-                # 粗略定位 ¶3 (最后 1/3 的 Discussion 内容，排除 ¶4 局限段)
+                # 七段式中 ¶5 临床含义位于后 1/3 区域 (¶6优势/¶7局限在最后)
                 disc_paragraphs = [p for p in disc_content.split('\n\n') if len(p.strip()) > 30]
-                if len(disc_paragraphs) >= 3:
-                    # ¶3 一般位于 Discussion 的后半段，但不是最后一段 (最后是 ¶4)
-                    para3_candidates = disc_paragraphs[-3:-1]  # 取倒数第2-3段
-                    para3_text = ' '.join(para3_candidates)
-                    para3_hedges = len(hedge_pattern.findall(para3_text))
-                    if para3_hedges > 3:
+                if len(disc_paragraphs) >= 5:
+                    # ¶5 位于倒数第3-4段区域 (七段: .../¶4文献不一致/¶5含义/¶6优势/¶7局限)
+                    para5_candidates = disc_paragraphs[-4:-2]  # 取倒数第3-4段
+                    para5_text = ' '.join(para5_candidates)
+                    para5_hedges = len(hedge_pattern.findall(para5_text))
+                    if para5_hedges > 3:
                         violations.append(
-                            f"Discussion ¶3 hedge 过多: {para3_hedges} 个 (限 ≤ 3)"
+                            f"Discussion ¶5 (临床含义) hedge 过多: {para5_hedges} 个 (限 ≤ 3)"
                         )
 
             if conclusion_match:
@@ -1614,7 +2091,8 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
 
     # 1. 加载真相源 cv_results.json
     cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
-               list(proj_dir.glob('data/cv_results.json'))
+               list(proj_dir.glob('data/cv_results.json')) + \
+               list(proj_dir.glob('outputs/cv_results.json'))
     if not cv_paths:
         return False, "数值追踪失败: 未找到 cv_results.json (Phase 3 基线文件缺失，无法执行数值追踪。请返回 Phase 3 完成模型训练并产出 cv_results.json)"
 
@@ -2128,7 +2606,8 @@ def check_table2_content_completeness(outputs: dict, orch) -> tuple:
     # 3. 检查行数 — 至少等于 cv_results.json 中模型数
     model_count_from_cv = len(data_rows)  # 默认以 Table 2 行数为准
     cv_paths = list(proj_dir.glob('models/cv_results.json')) + \
-               list(proj_dir.glob('data/cv_results.json'))
+               list(proj_dir.glob('data/cv_results.json')) + \
+               list(proj_dir.glob('outputs/cv_results.json'))
     if cv_paths:
         try:
             cv_data = json.loads(cv_paths[0].read_text())
@@ -2196,6 +2675,7 @@ def check_baseline_compliance(outputs: dict, orch) -> tuple:
     # 查找 generate_figures.py
     gen_fig_paths = list(proj_dir.glob('generate_figures.py')) + \
                     list(proj_dir.glob('figures/generate_figures.py')) + \
+                    list(proj_dir.glob('scripts/generate_figures.py')) + \
                     list(proj_dir.glob('regenerate_figures_tables.py'))
 
     if not gen_fig_paths:
@@ -2679,6 +3159,367 @@ def check_recency_of_ingested(outputs: dict, orch) -> tuple:
 
 
 # ============================================================
+# Phase 6: 分类变量标签与亚组N计数一致性
+# ============================================================
+
+
+def check_categorical_label_consistency(outputs: dict, orch) -> tuple:
+    """分类变量标签一致性: Table 1 的变量标签与 data/data_dictionary.md 一致
+
+    防止 generate_tables.py 硬编码错误标签 (如 is_elective=0 → "Emergency" 应为 "Non-elective")。
+    错误标签会传播到 Results/Discussion 导致全文自相矛盾。
+
+    检查逻辑:
+    1. 从 data/data_dictionary.md 加载编码→标签映射
+    2. 扫描 Table 1 (Table1_baseline.md) 中分类变量的标签行
+    3. 比较两者是否一致; 不一致则列出具体差异
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 加载数据字典
+    dict_file = proj_dir / 'data' / 'data_dictionary.md'
+    if not dict_file.exists():
+        return True, "跳过 (无数据字典, 无法校验标签)"
+
+    try:
+        dict_content = dict_file.read_text(encoding='utf-8')
+    except OSError:
+        return True, "跳过 (数据字典读取失败)"
+
+    # 解析: | var_name | code_value | label_en | label_zh | ...
+    code_to_label = {}  # (var, code) → label_en
+    label_set = set()    # 所有合法标签
+    for line in dict_content.splitlines():
+        cols = [c.strip().strip('`') for c in line.split('|')[1:-1]]
+        if len(cols) >= 4 and cols[0] and cols[1] and cols[2]:
+            var, code, label = cols[0], cols[1], cols[2]
+            if var.lower() not in ('variable_name', 'variable', '---', ':'):
+                code_to_label[(var.lower(), code.lower())] = label
+                label_set.add(label.lower())
+
+    if not label_set:
+        return True, "跳过 (数据字典为空)"
+
+    # 2. 扫描 Table 1
+    table1 = proj_dir / 'tables' / 'Table1_baseline.md'
+    if not table1.exists():
+        return True, "跳过 (无 Table 1)"
+
+    try:
+        t1_content = table1.read_text(encoding='utf-8')
+    except OSError:
+        return True, "跳过 (Table 1 读取失败)"
+
+    violations = []
+
+    # 提取 Table 1 中的分类变量标签: 查找 "xxx, n (%)" 或 "xxx, n(%)" 模式
+    # 例如: "Emergency admission, n (%)" → label candidate = "emergency admission"
+    label_rows = re.findall(
+        r'(?:^\|)?\s*([A-Za-z][A-Za-z\s/()-]+),\s*n\s*\(%\)',
+        t1_content, re.MULTILINE | re.IGNORECASE
+    )
+    for row_label in label_rows:
+        row_label_clean = row_label.strip().lower()
+        # 跳过连续变量标签 (含 mean/SD/median/IQR/years 等)
+        if any(kw in row_label_clean for kw in ['mean', 'sd', 'median', 'iqr', 'year', 'age']):
+            continue
+        # 检查该标签是否出现在数据字典中
+        if row_label_clean not in label_set and row_label_clean not in label_set:
+            # 它在字典里吗?
+            found = any(
+                row_label_clean == label.lower() or label.lower() in row_label_clean
+                for label in label_set
+            )
+            if not found:
+                # 尝试模糊匹配
+                similar = [l for l in label_set if any(w in l for w in row_label_clean.split())]
+                hint = f"  (字典中近似的标签: {similar[:3]})" if similar else "  (该标签未在数据字典中找到对应)"
+                violations.append(f"Table 1 标签 \"{row_label.strip()}\" 不在数据字典中{hint}")
+
+    if violations:
+        return False, (
+            f"分类变量标签不一致: {len(violations)} 处差异\n" +
+            "\n".join(f"  - {v}" for v in violations[:5]) +
+            ("\n  ..." if len(violations) > 5 else "")
+        )
+
+    return True, f"分类标签一致 ✓ (检查了 {len(label_rows)} 个变量标签)"
+
+
+def check_subgroup_n_consistency(outputs: dict, orch) -> tuple:
+    """亚组 N 一致性: Results 中的亚组 N 计数与 Table 1/Table 3 一致
+
+    防止 scientific-writer 独立计算/推测亚组计数, 导致 Results 与 Tables 矛盾
+    (如 Results 写 Emergency=11,892 但 Table 1=14,783)。
+
+    检查逻辑:
+    1. 从 Table 1 提取分类变量的 N-% 声明
+    2. 从 Table 3 提取亚组分层 N
+    3. 从 Results (sections/05_results.md) 提取所有 "N=xxx" / "n (%)" 声明
+    4. 对同一分类变量, 交叉验证 N 总数和分层计数
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 1. 读 Table 1, 提取分类变量的 N-% 声明
+    table1 = proj_dir / 'tables' / 'Table1_baseline.md'
+    t1_pairs = {}  # label → (N, pct)
+    if table1.exists():
+        try:
+            t1_text = table1.read_text(encoding='utf-8')
+            # 匹配模式: "Emergency admission, n (%) | 14,783 (75.3)" 或 "..., n (%) 14,783 (75.3)"
+            for m in re.finditer(
+                r'([A-Za-z][A-Za-z\s/()-]+),\s*n\s*\(\s*%\s*\)[^\d]*([\d,]+)\s*\(([\d.]+)%?\)',
+                t1_text, re.IGNORECASE
+            ):
+                label = m.group(1).strip().lower()
+                n_val = int(m.group(2).replace(',', ''))
+                pct_val = float(m.group(3))
+                t1_pairs[label] = (n_val, pct_val)
+        except OSError:
+            pass
+
+    if not t1_pairs:
+        return True, "跳过 (Table 1 无可提取的分类 N 数据)"
+
+    # 2. 读 Results, 提取 N 声明
+    results_file = None
+    sections_dir = proj_dir / 'sections'
+    if sections_dir.exists():
+        for f in sections_dir.glob('*.md'):
+            if 'result' in f.name.lower():
+                results_file = f
+                break
+
+    if not results_file:
+        return True, "跳过 (无 Results 文件)"
+
+    try:
+        results_text = results_file.read_text(encoding='utf-8')
+    except OSError:
+        return True, "跳过 (Results 读取失败)"
+
+    violations = []
+
+    # 对 Table 1 中每个分类变量, 在 Results 中搜索对应的 N 引用
+    for label, (t1_n, t1_pct) in t1_pairs.items():
+        # 匹配 Results 中对该变量的 N 引用: "XXX N=xxx" / "XXX (xxx, xx%)" / "xxx patients"
+        # 使用 label 中的关键词在 Results 中搜索
+        keywords = [w for w in label.split() if len(w) > 2 and w not in ('and', 'the', 'for', 'with')]
+        if not keywords:
+            continue
+
+        # 在包含关键词的段落中搜索 N/百分比声明
+        pattern = re.compile(
+            r'(?:n\s*[=:]\s*|\()\s*([\d,]+)\s*(?:\)|patients|subjects)',
+            re.IGNORECASE
+        )
+        # 先找到提及该变量的行
+        context_lines = []
+        for i, line in enumerate(results_text.splitlines()):
+            if any(kw.lower() in line.lower() for kw in keywords[:2]):
+                # 收集上下文 (±1 行)
+                start = max(0, i - 1)
+                end = min(len(results_text.splitlines()), i + 2)
+                context_lines.extend(results_text.splitlines()[start:end])
+
+        context = ' '.join(context_lines)
+        for m in re.finditer(r'([\d,]+)\s*(?:patients|subjects|\((\d+\.?\d*)%\))', context, re.IGNORECASE):
+            results_n = int(m.group(1).replace(',', ''))
+            # 容忍 5% 以内的差异 (可能是小数舍入)
+            diff_pct = abs(results_n - t1_n) / max(t1_n, 1) * 100
+            if diff_pct > 5:
+                violations.append(
+                    f"\"{label}\": Table 1 N={t1_n} ({t1_pct}%), "
+                    f"但 Results 中声明 N≈{results_n} (偏差 {diff_pct:.0f}%)"
+                )
+            break  # 每个变量只报告第一个矛盾
+
+    if violations:
+        return False, (
+            f"亚组 N 计数不一致: {len(violations)} 处差异\n" +
+            "\n".join(f"  - {v}" for v in violations[:3]) +
+            ("\n  ..." if len(violations) > 3 else "")
+        )
+
+    return True, f"亚组 N 一致性通过 ✓ (检查了 {len(t1_pairs)} 个分类变量)"
+
+
+# ============================================================
+# Phase 7: 临床工具部署检查
+# ============================================================
+
+def check_clinical_model_loadable(outputs: dict, orch) -> tuple:
+    """模型文件存在并可加载 — 验证 .pkl 模型存在且有 predict 方法"""
+    import os as _os
+    proj_dir = _find_project_dir(orch, getattr(orch, '_current_project_id', None) or "")
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 检查模型文件是否存在
+    model_candidates = []
+    for pattern in ["models/*.pkl", "models/*.joblib"]:
+        if hasattr(proj_dir, 'glob'):
+            model_candidates.extend(proj_dir.glob(pattern))
+    if not model_candidates:
+        return True, "跳过 (无 .pkl 模型文件)"
+
+    # 尝试加载第一个模型
+    model_path = model_candidates[0]
+    if not _os.path.exists(str(model_path)):
+        return False, f"模型文件不存在: {model_path}"
+
+    try:
+        import joblib
+        model = joblib.load(str(model_path))
+        if not hasattr(model, 'predict'):
+            return False, f"模型缺少 predict 方法 (类型: {type(model).__name__})"
+        return True, f"模型可加载且含 predict 方法 ✓ (类型: {type(model).__name__})"
+    except Exception as e:
+        return False, f"模型加载失败: {e}"
+
+
+def check_model_export_complete(outputs: dict, orch) -> tuple:
+    """模型导出文件完整 — model_info.json + feature_config.json 存在且格式正确"""
+    import json as _json
+    proj_dir = _find_project_dir(orch, getattr(orch, '_current_project_id', None) or "")
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    import os as _os
+    model_info = proj_dir / "supplements" / "model_info.json"
+    feature_config = proj_dir / "supplements" / "feature_config.json"
+
+    if not model_info.exists():
+        return False, "supplements/model_info.json 缺失 — 模型导出步骤未完成"
+    if not feature_config.exists():
+        return False, "supplements/feature_config.json 缺失 — 特征配置未生成"
+
+    # 验证 JSON 格式
+    try:
+        mi = _json.loads(model_info.read_text())
+        required_keys = ["features", "performance"]
+        missing = [k for k in required_keys if k not in mi]
+        if missing:
+            return False, f"model_info.json 缺少字段: {missing}"
+    except _json.JSONDecodeError as e:
+        return False, f"model_info.json 格式错误: {e}"
+
+    try:
+        fc = _json.loads(feature_config.read_text())
+        if not isinstance(fc, dict) or len(fc) == 0:
+            return False, "feature_config.json 为空或无特征配置"
+    except _json.JSONDecodeError as e:
+        return False, f"feature_config.json 格式错误: {e}"
+
+    return True, "模型导出文件完整且格式正确 ✓"
+
+
+def check_clinical_app_generated(outputs: dict, orch) -> tuple:
+    """Web 应用文件存在 — supplements/app.py 存在且包含必要元素"""
+    proj_dir = _find_project_dir(orch, getattr(orch, '_current_project_id', None) or "")
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    import os as _os
+    app_file = proj_dir / "supplements" / "app.py"
+    if not app_file.exists():
+        return False, "supplements/app.py 缺失 — Web 应用未生成"
+
+    content = app_file.read_text()
+    required_elements = [
+        ("streamlit", "import streamlit"),
+        ("predict", "def predict"),
+        ("st.title", "st.title("),
+    ]
+    for name, pattern in required_elements:
+        if pattern not in content:
+            return False, f"app.py 缺少必要元素: {name}"
+    return True, "Web 应用文件存在且含必要元素 ✓"
+
+
+def check_clinical_disclaimer_present(outputs: dict, orch) -> tuple:
+    """安全免责声明 — app.py 包含临床安全免责声明"""
+    proj_dir = _find_project_dir(orch, getattr(orch, '_current_project_id', None) or "")
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    import os as _os
+    app_file = proj_dir / "supplements" / "app.py"
+    if not app_file.exists():
+        return True, "跳过 (app.py 不存在)"
+
+    content = app_file.read_text().lower()
+    checks = [
+        ("for research", "for research"),
+        ("educational purposes", "educational purposes"),
+        ("medical advice", "medical advice"),
+    ]
+    missing = [name for name, pattern in checks if pattern not in content]
+    if missing:
+        return False, f"app.py 缺少安全免责声明要素: {missing}"
+    return True, "安全免责声明完整 ✓"
+
+
+def check_deployment_config_complete(outputs: dict, orch) -> tuple:
+    """部署配置完整 — run_webapp.py + build_exe.py + requirements.txt + Dockerfile + README.md 存在"""
+    proj_dir = _find_project_dir(orch, getattr(orch, '_current_project_id', None) or "")
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    import os as _os
+    run_script = proj_dir / "supplements" / "run_webapp.py"
+    build_exe = proj_dir / "supplements" / "build_exe.py"
+    req_file = proj_dir / "supplements" / "requirements.txt"
+    docker_file = proj_dir / "supplements" / "Dockerfile"
+    readme = proj_dir / "supplements" / "README.md"
+
+    missing = []
+    if not run_script.exists():
+        missing.append("run_webapp.py")
+    if not build_exe.exists():
+        missing.append("build_exe.py")
+    if not req_file.exists():
+        missing.append("requirements.txt")
+    if not docker_file.exists():
+        missing.append("Dockerfile")
+    if not readme.exists():
+        missing.append("README.md")
+
+    if missing:
+        return False, f"部署配置文件缺失: {missing}"
+
+    # 检查 requirements.txt 包含核心依赖
+    req_content = req_file.read_text().lower()
+    core_deps = ["streamlit", "numpy", "pandas"]
+    missing_deps = [d for d in core_deps if d not in req_content]
+    if missing_deps:
+        return False, f"requirements.txt 缺少核心依赖: {missing_deps}"
+
+    # 检查 Dockerfile 包含必要指令
+    docker_content = docker_file.read_text()
+    if "FROM" not in docker_content or "RUN" not in docker_content:
+        return False, "Dockerfile 格式不正确"
+
+    return True, "部署配置完整 ✓"
+
+
+# ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
 
@@ -2688,6 +3529,7 @@ GATE_DEFINITIONS = {
             "lit_precheck": check_literature_precheck_exists,
             "frame_complete": check_frame_assessment_complete,
             "data_availability": check_data_availability_confirmed,
+            "data_dictionary": check_data_dictionary_exists,
         },
         "llm_checks": [
             "研究问题的临床重要性是否充分论述?",
@@ -2774,9 +3616,10 @@ GATE_DEFINITIONS = {
             "ref_count": check_ref_count,
             "ref_recency": check_ref_recency,
             "all_refs_cited": check_all_refs_cited_in_text,
-            "discussion_paragraphs": check_discussion_four_paragraphs,
+            "discussion_paragraphs": check_discussion_seven_paragraphs,
             "discussion_no_subheadings": check_discussion_no_subheadings,
-            "discussion_no_conclusion": check_discussion_p4_no_conclusion,
+            "discussion_no_conclusion": check_discussion_last_para_no_conclusion,
+            "discussion_explanation": check_discussion_explanation_section,
             "humanize_quality": check_humanize_quality,
             "numerical_traceability": check_numerical_traceability,
             "precision_consistency": check_numerical_precision_consistency,
@@ -2788,16 +3631,43 @@ GATE_DEFINITIONS = {
             "methods_subsections": check_methods_excessive_subsections,
             "results_subsections": check_results_excessive_subsections,
             "cohort_attrition": check_cohort_attrition_consistency,
+            "categorical_labels": check_categorical_label_consistency,
+            "subgroup_n_consistency": check_subgroup_n_consistency,
+            "doi_title_match": check_doi_title_match,
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",
-            "Discussion 四段是否形成四个语义段落? (¶1 主要发现/¶2 文献对比/¶3 含义/¶4 局限, 非仅空行分隔)",
+            (
+                "Discussion 七段语义审查 (21b) — 逐段评估:\n"
+                "¶1 核心发现是否简洁重申(不重复Results数字/不引用文献)?\n"
+                "¶2 是否给出最可能解释+替代解释(不过度推测)?\n"
+                "¶3 是否将本研究发现与一致文献逐条对比(每篇说明关系, 非堆砌引用号)?\n"
+                "¶4 是否列出不一致发现+可能原因(人群/方法/变量差异, ≥2个差异点)?\n"
+                "¶5 每条含义是否有 because(内部数据)+supported by(外部文献)?\n"
+                "¶6 优势是否简洁具体(≤4条, 非泛泛)?\n"
+                "¶7 局限是否按优先级排列(数据→验证→测量→方法→混杂→泛化)+配缓解+以具体未来方向收尾(非空泛标语)?"
+            ),
             "Conclusion 是否独立章节 (## Conclusion)?",
             "所有数值是否可追溯到上游分析输出?",
             "是否存在虚假引用或未读引用?",
             "参考文献时效性是否达标 (≥80% 近5年文献)?",
             "所有非通用缩写在首次出现时是否给出了全称 (全称 (ABBR) 格式)? 通用缩写 (DNA/RNA/BMI/CI/AUC/OR/HR/SD) 除外",
             "去 AI 味改写是否真正改善了文本自然度? (句子长度变化/段落节奏/转折自然性/模板痕迹/hedge 适度)",
+        ],
+    },
+    "clinical_tool": {
+        "auto_checks": {
+            "model_loadable": check_clinical_model_loadable,
+            "model_export_complete": check_model_export_complete,
+            "app_generated": check_clinical_app_generated,
+            "disclaimer_present": check_clinical_disclaimer_present,
+            "deployment_config_complete": check_deployment_config_complete,
+        },
+        "llm_checks": [
+            "临床工具输入表单是否按临床逻辑分组 (人口学/功能测量/实验室/临床)? 每个输入项是否有临床名称+单位?",
+            "风险输出是否清晰 (概率+分类+参考AUC)? 对临床医生(<5分钟填写)是否可用?",
+            "安全免责声明是否醒目且完整? (必须包含 'for research and educational purposes only' + 'does not constitute medical advice')",
+            "输入边界处理和异常值提示是否合理? 是否对不可能值(如年龄>120)给出警告?",
         ],
     },
     "kb_enrich": {

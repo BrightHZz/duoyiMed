@@ -30,6 +30,7 @@ LangGraph 编排图 — 多 Agent 协作的核心编排引擎
 """
 
 import json
+import os
 import re
 import time
 from datetime import datetime
@@ -48,6 +49,7 @@ from .project_predictor import ProjectPredictor, ProjectProfile, infer_profile
 from .adaptive_scheduler import AdaptiveScheduler
 from .baseline_manager import BaselineManager
 from .preflight_scanner import PreflightScanner
+from .phase6_runner import Phase6Runner
 
 
 # ================================================================
@@ -100,6 +102,7 @@ PROJECT_PHASES = {
         "expected_outputs": [
             "00_literature/literature-precheck.md",
             "data/data-availability.md",
+            "data/data_dictionary.md",
             "data/modeling-feasibility.md",
             "data/phenotype-definition.md",
             "data/frame-assessment.md",
@@ -172,22 +175,22 @@ PROJECT_PHASES = {
         "multi_step": True,  # 🆕 P0: 论文撰写需要子编排 (表格→图表→分节→合稿)
         "description": "论文撰写 (基于内部+外部验证完整结果)",
         "depends_on": ["review"],
-        "next": None,
+        "next": "clinical_tool",
         "steps": [
             {
                 "name": "tables",
                 "agents": ["research-assistant"],
-                "task_prompt": "{user_request}\n\n请根据上游数据(cv_results.json + Phase 3/4 输出)生成论文表格，写入 tables/ 目录:\n\nTable 1 (基线特征表): 按结局变量分组, 报告各变量均值±SD或n(%), SMD, 缺失率。\n\nTable 2 (模型性能对比) — 必须包含以下全部列:\n| Model | AUC (95% CI) | PR-AUC | Brier | Calib Slope | Sensitivity | Specificity | F1 |\n|-------|-------------|--------|-------|------------|-------------|------------|----|\n| 模型1 | ... | ... | ... | ... | ... | ... | ... |\n\n⚠️ 所有模型(主模型+baseline+对比模型)必须填满全部列。如果 cv_results.json 中某模型缺少某指标, 报告给编排器并标注为 [数据缺失], 不得留空或填 N/A。\n\nTable 3 (亚组分析): 按预设亚组分层报告模型性能。",
+                "task_prompt": "{user_request}\n\n请根据上游数据(cv_results.json + Phase 3/4 输出)生成论文表格，写入 tables/ 目录:\n\nTable 1 (基线特征表): 按结局变量分组, 报告各变量均值±SD或n(%), SMD, 缺失率。\n\nTable 2 (模型性能对比) — 必须包含以下全部列:\n| Model | AUC (95% CI) | PR-AUC | Brier | Calib Slope | Sensitivity | Specificity | F1 |\n|-------|-------------|--------|-------|------------|-------------|------------|----|\n| 模型1 | ... | ... | ... | ... | ... | ... | ... |\n\n⚠️ 所有模型(主模型+baseline+对比模型)必须填满全部列。如果 cv_results.json 中某模型缺少某指标, 报告给编排器并标注为 [数据缺失], 不得留空或填 N/A。\n\nTable 3 (亚组分析): 按预设亚组分层报告模型性能。\n\n⚠️ 数值舍入规则 (强制执行, 禁止使用 Python 内置 round()):\n```python\nfrom engine.utils.rounding import round_half_up\n# AUC/C-statistic → round_half_up(value, 3)\n# OR/HR/RR → round_half_up(value, 2)\n# 百分比 → round_half_up(value, 1)\n# p 值 → round_half_up(value, 3)  # p<0.001 写为 \"p < 0.001\"\n# 效应量(Cohen's d/Hedges' g) → round_half_up(value, 2)\n# 样本量/计数 → int(value)\n# 95% CI 精度与点估计一致\n```\n原因: Python 内置 round(0.7595, 3) 因 IEEE 754 浮点误差返回 0.759 而非 0.760。round_half_up 确保十进制精确舍入。\n\n⚠️ 分类变量标签 (禁止硬编码):\n- Table 1 中所有分类变量的标签必须从 data/data_dictionary.md 读取对应编码的 label_en/label_zh\n- 示例: is_elective=0 → 查字典得 \"Non-elective\" 而非硬编码为 \"Emergency admission\"\n- 禁止在脚本中内联字符串定义编码→标签映射; 必须 import 或 parse data/data_dictionary.md",
             },
             {
                 "name": "figures",
                 "agents": ["ml-engineer"],
-                "task_prompt": "{user_request}\n\n请生成论文图表，文件命名须严格遵循 Figure[N]_[descriptor].[ext] 格式:\n- Figure1_cohort-flow-diagram.png + .tiff (队列流程图/Figure 1)\n- Figure2_roc-curve.png + .tiff (ROC曲线/Figure 2)\n- Figure3_calibration-plot.png + .tiff (校准曲线/Figure 3)\n- Figure4_feature-importance.png + .tiff (SHAP特征重要性/Figure 4)\n对应的 Figure[N]_caption.md 和 Figure[N]_[descriptor]_data.json 也须使用同编号体系。\n所有图片写入 figures/ 目录。\n\n⚠️ 数据源强制要求 (禁止推测):\n- Figure 1 的筛选 N 必须从 outputs/cohort_attrition.json 读取，禁止推测或编造。如文件不存在，报错退出。\n- Figures 2-4 的 AUC/校准/特征重要性必须从 models/cv_results.json 读取，禁止从模型对象 (.feature_importances_) 重新提取。\n- 每个 Figure 必须同时产出对应的 Figure[N]_[descriptor]_data.json 文件，值与上游数据源一致。缺失 data.json 将导致 Gate 6 FAIL。",
+                "task_prompt": "{user_request}\n\n请生成论文图表，文件命名须严格遵循 Figure[N]_[descriptor].[ext] 格式:\n- Figure1_cohort-flow-diagram.png + .tiff (队列流程图/Figure 1)\n- Figure2_roc-curve.png + .tiff (ROC曲线/Figure 2)\n- Figure3_calibration-plot.png + .tiff (校准曲线/Figure 3)\n- Figure4_feature-importance.png + .tiff (SHAP特征重要性/Figure 4)\n对应的 Figure[N]_caption.md 和 Figure[N]_[descriptor]_data.json 也须使用同编号体系。\n所有图片写入 figures/ 目录。\n\n⚠️ 数据源强制要求 (禁止推测):\n- Figure 1 的筛选 N 必须从 outputs/cohort_attrition.json 读取，禁止推测或编造。如文件不存在，报错退出。\n- Figures 2-4 的 AUC/校准/特征重要性必须从 models/cv_results.json 读取，禁止从模型对象 (.feature_importances_) 重新提取。\n- 每个 Figure 必须同时产出对应的 Figure[N]_[descriptor]_data.json 文件，值与上游数据源一致。缺失 data.json 将导致 Gate 6 FAIL。\n\n⚠️ 数值舍入规则 (强制执行, 禁止使用 Python 内置 round()):\n```python\nfrom engine.utils.rounding import round_half_up\n# 图形标注中的 AUC/C-statistic → round_half_up(value, 3)\n# Figure caption 中的所有数值必须按精度标准舍入:\n#   - AUC/C-statistic → 3 位 (0.842)\n#   - OR/HR/RR → 2 位 (1.34)\n#   - 百分比 → 1 位 (84.2%)\n#   - p 值 → 3 位 (0.032)\n# _data.json 中的值同样使用 round_half_up() 舍入\n```\n原因: Python 内置 round(0.7595, 3) 因 IEEE 754 浮点误差返回 0.759 而非 0.760。round_half_up 确保十进制精确舍入。",
             },
             {
                 "name": "sections",
                 "agents": ["scientific-writer"],
-                "task_prompt": "{user_request}\n\n{step_results}\n\n请逐个撰写 IMRAD 各章节文件到 sections/ 目录。\n\n⚠️ Methods 结构: 仅限 5 个 ### 子标题 (Study Design and Setting / Study Population / Outcomes and Predictors / Statistical Analysis / Sensitivity Analysis)。正态性检验、缺失处理、软件版本整合到 Statistical Analysis 段内，禁止额外子标题。\n\n⚠️ Results 结构: 仅限 5 个 ### 子标题 (Study Population and Baseline Characteristics / Model Performance / Feature Importance / Secondary and Subgroup Analyses / Sensitivity Analyses)，按此顺序不可打乱。每个子标题覆盖一类结果，禁止为单张图/表创建独立子标题。\n\n⚠️ 参考文献约束:\n- References 中的每篇文献 [n] 必须在正文中至少被引用一次，写完后交叉检查 References 列表与正文引用 1:1 对应\n- 论著 ≥25 篇 且 ≤40 篇, 综述 ≥45 篇 且 ≤60 篇\n- 禁止为满足数量/时效性而堆砌未被正文引用的文献",
+                "task_prompt": "{user_request}\n\n{step_results}\n\n请逐个撰写 IMRAD 各章节文件到 sections/ 目录。\n\n⚠️ Methods 结构: 仅限 5 个 ### 子标题 (Study Design and Setting / Study Population / Outcomes and Predictors / Statistical Analysis / Sensitivity Analysis)。正态性检验、缺失处理、软件版本整合到 Statistical Analysis 段内，禁止额外子标题。\n\n⚠️ Results 结构: 仅限 5 个 ### 子标题 (Study Population and Baseline Characteristics / Model Performance / Feature Importance / Secondary and Subgroup Analyses / Sensitivity Analyses)，按此顺序不可打乱。每个子标题覆盖一类结果，禁止为单张图/表创建独立子标题。\n\n⚠️ 参考文献约束:\n- References 中的每篇文献 [n] 必须在正文中至少被引用一次，写完后交叉检查 References 列表与正文引用 1:1 对应\n- 论著 ≥25 篇 且 ≤40 篇, 综述 ≥45 篇 且 ≤60 篇\n- 禁止为满足数量/时效性而堆砌未被正文引用的文献\n\n⚠️ 亚组 N 计数一致性 (强制, 禁止推测):\n- Results 中引用任何变量的亚组 N 计数必须与 Table 1/Table 3 中的数值完全一致\n- 示例: 如果 Table 1 报告 Emergency=14,783 (75.3%), Results 中写 Emergency N 必须为 14,783, 不能写成 11,892\n- 所有 N/%/计数从 tables/*.md 中引用, 禁止自行计算或推测\n- 同一个变量的分类定义和标签必须在全文中统一 (Table 1 = Results = Discussion)",
             },
             {
                 "name": "humanize",
@@ -229,6 +232,42 @@ PROJECT_PHASES = {
             "submission/figures/Figure2_roc-curve.png",
             "submission/figures/Figure3_calibration-plot.png",
             "submission/figures/Figure4_feature-importance.png",
+        ],
+    },
+    "clinical_tool": {
+        "agents": ["clinical-tool-developer"],
+        "parallel": False,
+        "multi_step": True,
+        "description": "临床工具部署: 模型导出 + Streamlit Web 应用 + 部署配置",
+        "depends_on": ["writing"],
+        "next": None,
+        "steps": [
+            {
+                "name": "export_model",
+                "agents": ["clinical-tool-developer"],
+                "task_prompt": "{user_request}\n\n请将训练好的模型导出为 Web 友好的格式供临床部署使用。\n\n输入文件:\n- models/xgb_final.pkl (或 models/lr_final.pkl) — 训练好的模型\n- models/cv_results.json — 模型性能数据\n- models/features.pkl — 特征列表\n- data/data_dictionary.md — 数据字典 (变量名→临床含义映射)\n\n任务:\n1. 加载 .pkl 模型\n2. 导出为 JSON 格式的模型参数 (XGBoost → 提取树结构为 JSON; Logistic Regression → 提取系数+截距为 JSON)\n3. 生成 supplements/model_info.json — 包含:\n   - 特征列表及每个特征的临床名称/单位/正常范围\n   - 模型性能指标 (AUC/CI/Calibration)\n   - 预测输出说明 (风险概率的解释)\n4. 生成 supplements/feature_config.json — Web 表单配置 (输入控件类型/选项/默认值/validation规则)\n\n⚠️ 特征配置必须基于 data/data_dictionary.md 将编码变量名映射为临床可读名称。",
+            },
+            {
+                "name": "build_app",
+                "agents": ["clinical-tool-developer"],
+                "task_prompt": "{user_request}\n\n{step_results}\n\n请基于导出的模型文件和特征配置, 生成临床 Web 工具。\n\n文件: engine/templates/clinical_app.py 作为模板参考。\n\n输出文件:\n- supplements/app.py — Streamlit 应用主文件\n- supplements/run_webapp.py — 一键启动脚本 (基于 engine/scripts/run_webapp.py 模板)\n- supplements/requirements.txt — 最小依赖 (streamlit, numpy, pandas, xgboost, matplotlib)\n- supplements/Dockerfile — Docker 部署配置\n- supplements/README.md — 部署使用说明\n\n⚠️ 强制要求:\n- 页面标题含研究项目名\n- 输入区: 按临床逻辑分组 (人口学/功能测量/实验室/临床), 每个输入项显示临床名称+单位\n- 输出区: 风险概率(%), 风险分类(低/中/高), AUC 参考值, 关键特征SHAP贡献(如有)\n- 底部强制显示: \"This tool is for research and educational purposes only. It does not constitute medical advice. Clinical decisions should not be based solely on this prediction.\"\n- 禁用词和 AI 标语 (paving the way 等)",
+            },
+            {
+                "name": "package_exe",
+                "agents": ["clinical-tool-developer"],
+                "task_prompt": "{user_request}\n\n{step_results}\n\n请生成将 Web 应用打包为独立可执行文件 (.exe) 的脚本。\n\n输出文件:\n- supplements/build_exe.py — PyInstaller 打包脚本 (跨平台: Windows .exe / macOS .app / Linux 可执行文件)\n\n脚本功能:\n1. 检查 PyInstaller 是否已安装 (pip install pyinstaller)\n2. 生成 .spec 配置文件 (包含隐藏导入: sklearn, xgboost, joblib, numpy)\n3. 执行 pyinstaller --onefile --add-data 打包模型文件和配置文件\n4. 输出可执行文件到 supplements/dist/ 目录\n5. 打包完成后打印使用说明\n\n⚠️ 强制要求:\n- --add-data 必须包含 model_info.json 和 feature_config.json (应用运行时需要)\n- 隐藏导入必须包含 sklearn.ensemble, xgboost, joblib (PyInstaller 可能检测不到)\n- macOS 需额外设置 JOBLIB_START_METHOD=forkserver 环境变量 (在 app.py 中已处理)\n- 打包后测试: dist/app --check-only 验证模型加载正常",
+            },
+        ],
+        "expected_outputs": [
+            "supplements/model_info.json",
+            "supplements/feature_config.json",
+            "supplements/app.py",
+            "supplements/run_webapp.py",
+            "supplements/build_exe.py",
+            "supplements/requirements.txt",
+            "supplements/Dockerfile",
+            "supplements/README.md",
+            "supplements/dist/",  # PyInstaller 打包输出
         ],
     },
 }
@@ -486,6 +525,7 @@ class ResearchOrchestrator:
             "scientific-writer": "shared/scientific-writer",
             "research-assistant": "shared/research-assistant",
             "humanizer": "shared/humanizer",
+            "clinical-tool-developer": "shared/clinical-tool-developer",
             "pm": "pmo",
         }
         return [mapping.get(a, a) for a in agents]
@@ -856,7 +896,8 @@ then: [回退到哪个 Phase, 做什么修正]
         gate_results = {}
         rework_history = []
         phases_to_run = ["system_design", "problem_definition", "design",
-                         "execution", "external_validation", "review", "writing"]
+                         "execution", "external_validation", "review", "writing",
+                         "clinical_tool"]
 
         # 🆕 追踪每个 Phase 的返工次数 (含跨Phase反馈计入)
         phase_rework_counts = {p: 0 for p in phases_to_run}
@@ -1227,7 +1268,8 @@ then: [回退到哪个 Phase, 做什么修正]
         多步骤子编排: 将复杂 Phase 拆分为多个子步骤执行。
 
         当前支持:
-        - Phase 6 (writing): 表格 → 图表 → 分章节 → 合稿 → 文件写入
+        - Phase 6 (writing): 🆕 路由到 Phase6Runner (Python+LLM hybrid pipeline)
+        - 其他 multi_step Phase: 传统的 LLM-only 多步骤 (legacy path)
 
         Phase 定义中需指定 `steps` 列表, 每个 step 有:
           - name: 步骤名
@@ -1237,6 +1279,15 @@ then: [回退到哪个 Phase, 做什么修正]
         """
         phase_def = PROJECT_PHASES.get(phase_id, {})
         steps = phase_def.get("steps", [])
+
+        # 🆕 Phase 6 writing: route to Phase6Runner (Python+LLM hybrid pipeline)
+        if phase_id == "writing":
+            return self._execute_phase_via_runner(
+                phase_id=phase_id,
+                user_request=user_request,
+                previous_outputs=previous_outputs,
+                project_id=project_id,
+            )
 
         if not steps:
             # Fallback: 无 steps 定义时退化为标准单 agent 执行
@@ -1268,6 +1319,7 @@ then: [回退到哪个 Phase, 做什么修正]
                 "scientific-writer": "shared/scientific-writer",
                 "research-assistant": "shared/research-assistant",
                 "humanizer": "shared/humanizer",
+                "clinical-tool-developer": "shared/clinical-tool-developer",
             }
             for a in step_agents:
                 resolved_agents.append(mapping.get(a, a))
@@ -1315,33 +1367,87 @@ then: [回退到哪个 Phase, 做什么修正]
                     )
                     step_results[f"{step_name}_{agent_id}"] = result
 
-        # 写入文件系统: 将 Agent 内存输出持久化到零件层 (sections/ tables/ figures/)
-        write_result = self._write_phase6_files(step_results, project_id)
-        outputs["_written_files"] = write_result.get("written_files", [])
+        # 写入文件系统: 将 Agent 内存输出持久化到零件层 (Phase 6 writing only)
+        if phase_id == "writing":
+            write_result = self._write_phase6_files(step_results, project_id)
+            outputs["_written_files"] = write_result.get("written_files", [])
 
-        # 🆕 调用 run_assembly.py 组装投稿层 (替代 LLM assembly step 的手动解析)
-        proj_dir = Path(write_result.get("base_dir", ""))
-        if proj_dir and proj_dir.exists():
-            engine_dir = Path(__file__).resolve().parent.parent  # engine/
-            assembly_script = engine_dir / "scripts" / "run_assembly.py"
-            if assembly_script.exists():
-                assembly_result = self._run_script_subprocess(
-                    str(assembly_script), proj_dir)
-                outputs["_assembly_result"] = assembly_result
-                if not assembly_result["success"]:
-                    print(f"  ❌ run_assembly.py FAILED (exit {assembly_result['exit_code']})")
-                    if assembly_result["stderr"]:
-                        print(f"  {assembly_result['stderr'][:500]}")
+            # 🆕 调用 run_assembly.py 组装投稿层 (替代 LLM assembly step 的手动解析)
+            proj_dir = Path(write_result.get("base_dir", ""))
+            if proj_dir and proj_dir.exists():
+                engine_dir = Path(__file__).resolve().parent.parent  # engine/
+                assembly_script = engine_dir / "scripts" / "run_assembly.py"
+                if assembly_script.exists():
+                    assembly_result = self._run_script_subprocess(
+                        str(assembly_script), proj_dir)
+                    outputs["_assembly_result"] = assembly_result
+                    if not assembly_result["success"]:
+                        print(f"  ❌ run_assembly.py FAILED (exit {assembly_result['exit_code']})")
+                        if assembly_result["stderr"]:
+                            print(f"  {assembly_result['stderr'][:500]}")
+                    else:
+                        print(f"  ✅ run_assembly.py 完成 — 投稿层已组装")
                 else:
-                    print(f"  ✅ run_assembly.py 完成 — 投稿层已组装")
+                    print(f"  ⚠️ run_assembly.py 未找到: {assembly_script}")
             else:
-                print(f"  ⚠️ run_assembly.py 未找到: {assembly_script}")
-        else:
-            print(f"  ⚠️ 无法定位项目目录, 跳过 run_assembly.py")
+                print(f"  ⚠️ 无法定位项目目录, 跳过 run_assembly.py")
 
         # 将所有 step_results 合并到 outputs (保持向后兼容的 agent_id key)
         outputs.update(step_results)
         outputs["_multi_step"] = "True"
+        return outputs
+
+    def _execute_phase_via_runner(
+        self, phase_id: str, user_request: str,
+        previous_outputs: dict, project_id: str,
+    ) -> dict:
+        """Execute Phase 6 writing via Phase6Runner (Python+LLM hybrid pipeline).
+
+        Replaces the legacy multi-step LLM path with a dedicated runner that:
+        - Runs Python scripts as subprocesses (preflight, figures, tables, humanize,
+          assembly, gate6)
+        - Delegates creative writing (sections) to the LLM via _call_agent()
+        - Delegates LLM semantic checks (humanize review, gate6 review) to agents
+
+        Returns an outputs dict backward-compatible with existing downstream code.
+        """
+        proj_dir = self._find_project_dir(project_id)
+        if not proj_dir:
+            return {
+                "error": f"Cannot locate project directory for {project_id}",
+                "_multi_step": "True",
+                "_runner_error": "project_dir_not_found",
+            }
+
+        runner = Phase6Runner(
+            project_dir=proj_dir,
+            project_id=project_id,
+            orchestrator=self,
+            verbose=True,
+        )
+
+        runner_result = runner.run(
+            user_request=user_request,
+            previous_outputs=previous_outputs,
+        )
+
+        # Convert runner result to orchestrator-compatible outputs dict
+        outputs = {}
+        step_results = runner_result.get("step_results", {})
+
+        # Sections output → scientific-writer agent output
+        sections_result = step_results.get("sections", {})
+        if sections_result.get("success") and sections_result.get("agent_output"):
+            outputs["shared/scientific-writer"] = sections_result["agent_output"]
+
+        # Embed runner metadata
+        outputs["_phase6_runner_result"] = runner_result
+        outputs["_multi_step"] = "True"
+
+        if not runner_result["success"]:
+            outputs["_phase6_error"] = runner_result.get("errors", [])
+            outputs["_phase6_failed_at"] = runner_result.get("failed_at")
+
         return outputs
 
     @staticmethod
@@ -1617,14 +1723,21 @@ then: [回退到哪个 Phase, 做什么修正]
                                timeout_sec: int = 120) -> dict:
         """Run a Python script as subprocess with exit code checking.
 
+        Injects repo root into PYTHONPATH so scripts can import from engine.utils.
+
         Returns:
             {"success": bool, "exit_code": int, "stdout": str, "stderr": str}
         """
         import subprocess
+        repo_root = str(Path(__file__).resolve().parent.parent.parent)
+        env = os.environ.copy()
+        existing = env.get('PYTHONPATH', '')
+        env['PYTHONPATH'] = f"{repo_root}:{existing}" if existing else repo_root
         try:
             result = subprocess.run(
                 ["python", script_path, "--project-dir", str(project_dir)],
                 capture_output=True, text=True, timeout=timeout_sec,
+                env=env,
             )
             return {
                 "success": result.returncode == 0,
@@ -2390,7 +2503,7 @@ then: [回退到哪个 Phase, 做什么修正]
         phase_scripts_map = {
             "execution": ["train_model.py", "tune_model.py"],
             "external_validation": ["external_validation.py"],
-            "writing": ["generate_figures.py", "regenerate_figures_tables.py"],
+            "writing": ["scripts/generate_figures.py", "scripts/generate_tables.py"],
         }
         target_scripts = phase_scripts_map.get(phase_id, ["*.py"])
 
@@ -2987,12 +3100,12 @@ cv_results.json 结构必须为:
 2. 为每个 Phase 指定 agent 列表 (一行一个, 格式: `@agent-id`)
 3. 输出项目章程
 
-可用 agent: clinical-researcher, data-engineer, research-assistant, computational-biologist, biostatistician, ml-engineer, scientific-writer, pi
+可用 agent: clinical-researcher, data-engineer, research-assistant, computational-biologist, biostatistician, ml-engineer, scientific-writer, clinical-tool-developer, pi
 
 ⚠️ 强制约束 — 阶段顺序不可违反：
 - 外部验证 (external validation) 必须在论文写作 (paper writing) 之前
-- 论文写作必须是最后一个阶段
-- 标准顺序: 问题定义 → 方案设计 → 执行(内部验证) → 外部验证 → 审查 → 论文撰写
+- 论文写作后可执行临床工具部署 (clinical tool deployment)
+- 标准顺序: 问题定义 → 方案设计 → 执行(内部验证) → 外部验证 → 审查 → 论文撰写 → 临床工具部署
 
 输出格式:
 ## 项目章程
@@ -3141,6 +3254,7 @@ cv_results.json 结构必须为:
             (["文献检索", "综述", "prisma", "阅读笔记", "文献扫描", "写入知识库", "写入 obsidian"], "research-assistant"),
             (["投稿", "期刊", "基金", "方向", "值不值得", "终审"], "pi"),
             (["训练", "调参", "xgboost", "shap", "特征工程", "代码", "实现"], "ml-engineer"),
+            (["部署", "web", "网页", "上线", "streamlit", "临床工具", "计算器", "风险评分", "app"], "clinical-tool-developer"),
         ]
         for keywords, agent in routing:
             if any(kw in req for kw in keywords):

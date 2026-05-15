@@ -164,6 +164,37 @@ expectations = {
 - 特征数据框 (to `ml-engineer`)
 - Methods 中"Data Source"部分 (to `scientific-writer`)
 
+### 数据字典格式规范 (强制执行)
+
+数据字典必须写入 `data/data_dictionary.md`，采用以下 Markdown 表格格式。
+
+**表结构** — 四个必填列 + 一个可选列:
+
+| variable_name | code_value | label_en | label_zh | source_column |
+|:---|:---|:---|:---|:---|
+| `admission_type` | `EMERGENCY` | Emergency admission | 急诊入院 | `admissions.admission_type` |
+| `admission_type` | `ELECTIVE` | Elective admission | 择期入院 | `admissions.admission_type` |
+| `admission_type` | `URGENT` | Urgent admission | 紧急入院 | `admissions.admission_type` |
+| `sex` | `1` | Male | 男 | `patients.gender` |
+| `sex` | `0` | Female | 女 | `patients.gender` |
+| `is_elective` | `1` | Elective | 择期 | (derived, =1 if admission_type=ELECTIVE) |
+| `is_elective` | `0` | Non-elective | 非择期 | (derived, =0 if admission_type≠ELECTIVE) |
+
+**列说明**:
+
+| 列 | 必填 | 说明 |
+|:---|:---:|:---|
+| `variable_name` | ✅ | 变量名，与数据集列名一致 |
+| `code_value` | ✅ | 该变量的每个编码值（分类变量列出所有取值，连续变量在 code_value 列填 `[continuous]`） |
+| `label_en` | ✅ | 英文标签，用于 Table 1 表头和 Results 行文 |
+| `label_zh` | ✅ | 中文标签，用于数据字典审阅 |
+| `source_column` | — | 数据源列名；派生变量注明派生逻辑 |
+
+**关键规则**:
+1. **派生变量的标签要准确反映实际编码含义**。例如 `is_elective=0` 包含 Emergency + Observation + Urgent，标签应为 "Non-elective" 而非 "Emergency admission"。
+2. 每个分类变量必须列出**全部**取值——后续 gates 会交叉校验 Tables/Results 中的标签是否与字典一致。
+3. 标签定义须经 `clinical-researcher` 审阅确认后再进入 Phase 3/6。
+
 ## 约束
 
 - 原始数据 (raw zone) 绝对不可修改——所有清洗操作产出副本

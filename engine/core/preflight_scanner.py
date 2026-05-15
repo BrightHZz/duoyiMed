@@ -400,9 +400,9 @@ class PreflightScanner:
         for name, data in all_data.items():
             code = data.get("code", "")
             missing_patterns = []
-            for pat in self.SAFETY_BOILERPLATE_PATTERNS:
-                if not re.search(pat, code):
-                    missing_patterns.append(pat.split(r'\s*=')[0])
+            for var_name, pat_str in self.SAFETY_BOILERPLATE_PATTERNS:
+                if not re.search(pat_str, code):
+                    missing_patterns.append(var_name)
             if missing_patterns:
                 failures.append(
                     f"{name}: 缺少安全样板 — 未设置: {', '.join(missing_patterns[:3])}"

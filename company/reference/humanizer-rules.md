@@ -77,14 +77,14 @@ Taken together, Overall, In summary, In conclusion,
 
 ### 2.2 Hedge 密度
 
-计数以下模糊词 (仅 Discussion ¶3 和 Conclusion):
+计数以下模糊词 (仅 Discussion ¶5 临床含义段 和 Conclusion):
 
 ```
 may, might, could, potentially, possibly, suggests, 
 may suggest, have the potential to, appears to
 ```
 
-- Discussion ¶3: ≤ 3 个 hedge 词
+- Discussion ¶5 (临床含义): ≤ 3 个 hedge 词
 - Conclusion: ≤ 1 个 hedge 词
 - 其他段落不做硬限制但建议 ≤ 2 个/段
 - 超过阈值 → FAIL
@@ -120,10 +120,13 @@ showed → demonstrated → revealed → indicated
 | **Introduction ¶3** | 禁用词、终结标语（¶3 不能写结论） | — |
 | **Methods** | 禁用词 (utilize→use)、术语一致性 | 过渡词密度 |
 | **Results** | 句长均匀度、过渡词密度、禁用词 | — |
-| **Discussion ¶1** | 句长均匀度、过渡词密度 | 终结标语 |
-| **Discussion ¶2** | 术语一致性、过渡词密度 | hedge 密度 |
-| **Discussion ¶3** | **hedge 密度 (最重灾区)**、终结标语、禁用词 | 句长均匀度 |
-| **Discussion ¶4** | 禁用词、终结标语 | 术语一致性 |
+| **Discussion ¶1 (核心发现)** | 句长均匀度、过渡词密度 | 终结标语 |
+| **Discussion ¶2 (机制解释)** | 词汇经济化、过渡词密度 | 确定性校准 |
+| **Discussion ¶3 (文献一致)** | 术语一致性、过渡词密度 | hedge 密度 |
+| **Discussion ¶4 (文献不一致)** | 术语一致性、过渡词密度 | hedge 密度 |
+| **Discussion ¶5 (临床含义)** | **hedge 密度 (最重灾区)**、终结标语、禁用词 | 句长均匀度 |
+| **Discussion ¶6 (优势)** | 词汇经济化、终结标语 | — |
+| **Discussion ¶7 (局限+未来方向)** | 禁用词、终结标语 | 术语一致性 |
 | **Conclusion** | hedge 密度、终结标语、禁用词 | — |
 | **Abstract** | **全部维度** (最显眼的部分) | — |
 
@@ -151,7 +154,7 @@ showed → demonstrated → revealed → indicated
 
 - [ ] 无禁用词命中 (≤ 0 个高优先级词)
 - [ ] 过渡词密度达标 (≤ 1/段, ≤ 3/全文)
-- [ ] Hedge 密度达标 (¶3 ≤ 3, Conclusion ≤ 1)
+- [ ] Hedge 密度达标 (¶5 临床含义 ≤ 3, Conclusion ≤ 1)
 - [ ] 无终结标语
 - [ ] 术语一致 (无同义词轮换)
 - [ ] 缩写首次使用给出全称

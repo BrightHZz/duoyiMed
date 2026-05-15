@@ -107,6 +107,10 @@ def assemble(project_dir: Path) -> dict:
     if figures_dir.exists():
         for ext in ['*.png', '*.tiff', '*.tif']:
             for fig_file in figures_dir.glob(ext):
+                # Only copy files matching Figure[N]_ naming convention
+                if not fig_file.name.startswith("Figure"):
+                    print(f"  Skipped (non-Figure file): figures/{fig_file.name}")
+                    continue
                 dest = submission_dir / "figures" / fig_file.name
                 shutil.copy2(fig_file, dest)
                 written.append(str(dest))

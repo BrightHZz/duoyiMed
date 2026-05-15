@@ -78,8 +78,8 @@ Top 5 SHAP: 步速(0.32), 年龄(0.29), 慢性病数(0.21),
    - 再主要发现 (给 AUC + CI)
    - 再特征重要性
    - 再亚组/敏感性
-3. Discussion: 四段式 (默认无小标题, 空行分隔)
-   - 主要发现 → 文献比较(一致+不一致) → 临床含义 → 优势/局限
+3. Discussion: 七段式 (默认无小标题, 空行分隔, JAMA+BMJ 对齐)
+   - 核心发现 → 机制解释 → 文献一致 → 文献不一致 → 临床含义 → 优势 → 局限+未来方向
 4. Conclusion: 独立章节, 与 Introduction ¶3 镜像呼应
 ```
 
@@ -141,22 +141,57 @@ alternative outcome (AUC 0.81), and including death as a competing risk
 
 In this prospective study of 5,432 community-dwelling Chinese older adults, 
 we developed and validated a machine learning model that predicted 2-year 
-frailty worsening with good discrimination (AUC 0.84). Functional measures— 
-particularly gait speed and grip strength—were the dominant predictors, 
-contributing nearly one-third of the model's total predictive power.
+frailty worsening with good discrimination. Functional measures—particularly 
+gait speed and grip strength—were the dominant predictors, contributing 
+nearly one-third of the model's total predictive power.
 
-[与文献比较, 分一致/不一致两段, 空行分隔...]
+The strong predictive contribution of physical performance measures likely 
+reflects their role as integrative markers of multiple physiological systems. 
+Gait speed, in particular, captures neuromuscular, cardiorespiratory, and 
+sensory function simultaneously. An alternative explanation is that self-
+reported chronic conditions—the other major predictor category—may be 
+under-measured in CHARLS, inflating the relative importance of objective 
+physical measures.
 
-[临床含义, 每条含义配 because 支撑, 支撑证据必须找到对应的有力文献——例如某篇具体研究在相似人群中得出了一致结论, 或某项 meta-analysis 支持该推断, 不可用弱证据或泛泛引用充数...]
+Our finding that functional measures dominate frailty prediction is consistent 
+with Fried et al. [1], who identified gait speed and grip strength as core 
+components of the frailty phenotype, and with Hoogendijk et al. [5], who 
+reported similar SHAP rankings in a Dutch cohort. The moderate discrimination 
+(AUC ~0.84) also aligns with the range reported in a recent meta-analysis [12].
 
-Strengths include the use of a nationally representative Chinese cohort, 
-rigorous nested cross-validation, temporal validation, and comprehensive 
-SHAP-based interpretability analysis. Limitations include the observational 
-design precluding causal inference, lack of external validation in 
-independent cohorts, potential selection bias from loss to follow-up, 
-and the unavailability of grip strength in the 2011 wave for sensitivity 
-analysis. The slight calibration underestimation in high-risk individuals 
-warrants caution if the model is used for individual risk communication.
+However, in contrast to Chen et al. [8], who found that laboratory biomarkers 
+(albumin, CRP) contributed more than physical measures, our model assigned 
+substantially less weight to laboratory features. This discrepancy may reflect 
+differences in variable availability—CHARLS lacks inflammatory markers like 
+IL-6 that might capture systemic processes more directly than albumin alone. 
+Population differences (Chinese vs. European) in the prevalence of 
+inflammation-driven frailty may also contribute.
+
+If externally validated, gait-speed-based risk stratification could help 
+clinicians in community health settings identify older adults who may benefit 
+from targeted preventive interventions, because gait speed was the single 
+strongest predictor (SHAP = 0.32) and is measurable without specialized 
+equipment, supported by Studenski et al. [15] who demonstrated gait speed 
+as a robust predictor of adverse outcomes in pooled cohort data. However, 
+this model predicts risk—it does not identify causal intervention targets—
+and functional measures may be markers of underlying processes rather than 
+modifiable risk factors themselves.
+
+Strengths of this study include the use of a nationally representative Chinese 
+cohort with complete 2-year follow-up, rigorous nested cross-validation with 
+temporal validation, and comprehensive SHAP-based interpretability analysis.
+
+This study has limitations. First, the observational design precludes causal 
+inference—the associations identified may reflect confounding rather than 
+etiologic relationships, although we adjusted for measured confounders and 
+results were consistent across sensitivity analyses. Second, the model lacks 
+external validation in independent cohorts, which limits assessment of 
+transportability to other populations or healthcare settings. Third, 
+grip strength was unavailable in the 2011 CHARLS wave for sensitivity 
+analysis, potentially overestimating gait speed's relative importance. 
+External validation in an independent Chinese cohort and in non-Chinese 
+populations is needed to confirm these findings and assess transportability 
+before clinical implementation.
 
 ## Conclusion
 
