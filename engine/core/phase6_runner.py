@@ -615,11 +615,18 @@ class Phase6Runner:
         return None
 
     def _script_not_found(self, script_name: str, step_name: str) -> dict:
+        msg = (
+            f"{script_name} 未找到。\n"
+            f"  搜索路径: {self.scripts_dir}/\n"
+            f"           {self.project_dir}/\n"
+            f"  请确保 ml-engineer 已生成此脚本。\n"
+            f"  模板参考: engine/templates/project_script_boilerplate.py"
+        )
         return {
             "success": False,
             "exit_code": -1,
             "stdout": "",
-            "stderr": f"{script_name} not found in {self.scripts_dir} or {self.project_dir}",
+            "stderr": msg,
             "error": f"Step '{step_name}': {script_name} not found",
         }
 
@@ -666,6 +673,15 @@ class Phase6Runner:
             # Truncate stdout/stderr to avoid memory issues
             stdout = result.stdout[-5000:] if result.stdout else ""
             stderr = result.stderr[-5000:] if result.stderr else ""
+
+            # 🆕 检测项目脚本是否缺少 --project-dir argparse
+            if result.returncode != 0 and "unrecognized arguments: --project-dir" in stderr:
+                stderr += (
+                    f"\n\n⚠️  此脚本不支持 --project-dir 参数。"
+                    f"\n  请基于 engine/templates/project_script_boilerplate.py 重新生成。"
+                    f"\n  该模板包含标准的 argparse --project-dir 支持。"
+                )
+
             return {
                 "success": result.returncode == 0,
                 "exit_code": result.returncode,

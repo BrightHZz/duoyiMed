@@ -73,6 +73,8 @@ def main():
                         help="Worker 进程数 (默认 1, 与 --worker 配合使用)")
     parser.add_argument("--cleanup-locks", action="store_true",
                         help="清理所有过期锁文件 (手动恢复)")
+    parser.add_argument("--project-dir", default=None, metavar="PATH",
+                        help="显式指定项目工作目录 (跳过自动发现)")
 
     args = parser.parse_args()
 
@@ -236,7 +238,7 @@ def main():
         print(f"摘要: {intent['summary']}")
         print("\n[DRY RUN] 未实际调用 LLM。")
     else:
-        result = orchestrator.run(user_request)
+        result = orchestrator.run(user_request, project_dir=args.project_dir)
         print("\n" + "=" * 60)
         print(result)
         print("=" * 60)

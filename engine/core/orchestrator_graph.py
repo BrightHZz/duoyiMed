@@ -542,8 +542,13 @@ class ResearchOrchestrator:
     # 主入口
     # ================================================================
 
-    def run(self, user_request: str) -> str:
-        """主入口: 接收用户请求, 编排 Agent 协作, 返回结果"""
+    def run(self, user_request: str, project_dir: str = None) -> str:
+        """主入口: 接收用户请求, 编排 Agent 协作, 返回结果。
+
+        Args:
+            user_request: 用户研究请求
+            project_dir: 可选, 项目工作目录 (显式指定时跳过 vault 搜索)
+        """
         print(f"\n{'='*60}")
         print(f"[Orchestrator] 接收请求: {user_request[:100]}...")
         print(f"{'='*60}\n")
@@ -555,6 +560,8 @@ class ResearchOrchestrator:
 
         # Step 1: 分类意图
         intent = self._classify_intent(user_request)
+        if project_dir:
+            intent["project_dir"] = project_dir
         print(f"[Orchestrator] 意图: {intent['intent']} — {intent['summary']}")
 
         # Step 2: 按意图路由。复杂/模糊请求优先走 PM 规划
@@ -2610,19 +2617,30 @@ then: [回退到哪个 Phase, 做什么修正]
                 print(f"  ⚠️ 基线变更处理失败 (不阻塞): {e}")
 
     def _find_project_dir(self, project_id: str) -> Optional[Path]:
-        """定位项目目录 (从 knowledge base vaults 搜索)"""
+        """定位项目工作目录 (按优先级搜索)。
+
+        1. Obsidian vault: {vault}/projects/{project_id}/
+        2. outputs/projects/: outputs/projects/{project_id}/
+        3. 直接路径: project_id 本身如果是已存在的目录
+        """
+        # 1. Obsidian vaults
         if hasattr(self, 'kb') and self.kb:
             vaults = getattr(self.kb, 'vaults', {})
             for _, vault_path in vaults.items():
                 candidate = Path(vault_path) / 'projects' / project_id
                 if candidate.exists():
                     return candidate
-        # fallback: 从 baseline_dir 推导
-        baseline_dir = getattr(self.config, 'baseline_dir', None)
-        if baseline_dir:
-            candidate = Path(baseline_dir).parent / project_id
-            if candidate.exists():
-                return candidate
+
+        # 2. outputs/projects/ (阶段 A)
+        candidate = self.config.projects_output_dir / project_id
+        if candidate.exists():
+            return candidate
+
+        # 3. 直接路径 (支持 --project-dir 显式传入绝对路径)
+        candidate = Path(project_id)
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
         return None
 
     def _run_preflight_check(self, phase_id: str, project_id: str) -> dict:
