@@ -50,6 +50,7 @@ from .adaptive_scheduler import AdaptiveScheduler
 from .baseline_manager import BaselineManager
 from .preflight_scanner import PreflightScanner
 from .phase6_runner import Phase6Runner
+from .project_manager import ProjectManager
 
 
 # ================================================================
@@ -504,10 +505,17 @@ class ResearchOrchestrator:
         self._adaptive_scheduler = None     # AdaptiveScheduler 实例
 
         # 🆕 技术状态基线管理器 (钱学森总体设计部 — 基线冻结+变更控制)
+        # 基线按项目隔离: outputs/projects/{project_id}/baselines/
         baseline_dir = getattr(self.config, 'baseline_dir', None)
         if baseline_dir is None:
-            baseline_dir = self.config.project_root / "outputs" / "baselines"
+            baseline_dir = self.config.projects_output_dir
         self.baseline_manager = BaselineManager(Path(baseline_dir))
+
+        # 🆕 项目管理器 (项目创建/状态持久化/断点续传)
+        self.project_manager = ProjectManager(self.config)
+
+        # 🆕 速率限制器 (Worker 注入, 单进程模式为 None 表示不限速)
+        self.rate_limiter = None
 
     def _get_phase_agents(self, phase_id: str) -> list:
         """公司模式: 获取事业部感知的阶段 Agent 列表, 将旧 ID 映射到新命名空间."""
@@ -534,8 +542,13 @@ class ResearchOrchestrator:
     # 主入口
     # ================================================================
 
-    def run(self, user_request: str) -> str:
-        """主入口: 接收用户请求, 编排 Agent 协作, 返回结果"""
+    def run(self, user_request: str, project_dir: str = None) -> str:
+        """主入口: 接收用户请求, 编排 Agent 协作, 返回结果。
+
+        Args:
+            user_request: 用户研究请求
+            project_dir: 可选, 项目工作目录 (显式指定时跳过 vault 搜索)
+        """
         print(f"\n{'='*60}")
         print(f"[Orchestrator] 接收请求: {user_request[:100]}...")
         print(f"{'='*60}\n")
@@ -547,6 +560,8 @@ class ResearchOrchestrator:
 
         # Step 1: 分类意图
         intent = self._classify_intent(user_request)
+        if project_dir:
+            intent["project_dir"] = project_dir
         print(f"[Orchestrator] 意图: {intent['intent']} — {intent['summary']}")
 
         # Step 2: 按意图路由。复杂/模糊请求优先走 PM 规划
@@ -569,6 +584,47 @@ class ResearchOrchestrator:
 
         print(f"\n[Orchestrator] 完成.\n")
         return result
+
+    def run_resume(self, project_id: str) -> str:
+        """续传已存在的项目, 从中断点继续执行。"""
+        saved = self.project_manager.load_state(project_id)
+        if not saved:
+            return f"项目 {project_id} 不存在。"
+        if saved.get("status") == "completed":
+            return f"项目 {project_id} 已完成。\n\n" + self.project_manager.get_project_summary(project_id)
+
+        self.active_division = saved.get("division", "geriatrics")
+        user_request = saved.get("user_request", "")
+
+        intent = {
+            "intent": "new_project",
+            "project_id": project_id,
+            "resume": True,
+            "summary": user_request,
+        }
+        return self._run_project_workflow(user_request, intent)
+
+    def list_projects(self, status_filter: str = None) -> str:
+        """列出所有项目, 返回可读摘要。"""
+        projects = self.project_manager.list_projects(status_filter)
+        if not projects:
+            return "(无项目)"
+
+        lines = [
+            f"{'ID':<24} {'事业部':<12} {'状态':<10} {'进度':<10} {'时间':<20}",
+            "-" * 80,
+        ]
+        for p in projects:
+            progress = f"{p['completed_count']}/{p['total_phases']}"
+            lines.append(
+                f"{p['project_id']:<24} {p['division']:<12} {p['status']:<10} "
+                f"{progress:<10} {p['updated_at'][:19] if p['updated_at'] else '':<20}"
+            )
+        return "\n".join(lines)
+
+    def project_status(self, project_id: str) -> str:
+        """查询单个项目的详细状态。"""
+        return self.project_manager.get_project_summary(project_id)
 
     def _needs_pm_planning(self, user_request: str) -> bool:
         """判断是否需要 PM 规划 (复杂/多步骤/模糊请求)"""
@@ -764,7 +820,8 @@ class ResearchOrchestrator:
 
         log_dir = getattr(self.config, 'run_log_dir', None)
         if log_dir is None:
-            log_dir = self.config.project_root / "outputs" / "run_logs"
+            # 使用 projects_output_dir 扫描所有项目日志 + 共享日志
+            log_dir = self.config.projects_output_dir
 
         self._run_analyzer = RunAnalyzer(log_dir=str(log_dir))
         n = self._run_analyzer.load(days=90)
@@ -885,8 +942,41 @@ then: [回退到哪个 Phase, 做什么修正]
             project_id=project_id,
         )
 
+    def _checkpoint_state(self, project_id: str, phase_index: int,
+                          all_outputs: dict, gate_results: dict,
+                          rework_history: list, phase_rework_counts: dict,
+                          invalidated_phases: set, status: str = "running"):
+        """在每个 Phase Gate 通过后持久化项目状态, 支持断点续传。"""
+        # 将 phase_outputs 压缩为摘要 (不保存完整文本, 完整文本在 Obsidian vault)
+        phase_summaries = {}
+        for pid, data in all_outputs.items():
+            if isinstance(data, dict):
+                summary = {}
+                for k, v in data.items():
+                    if k.startswith("_"):
+                        summary[k] = v[:200] if isinstance(v, str) else v
+                    else:
+                        summary[k] = v[:200] + "..." if isinstance(v, str) and len(v) > 200 else v
+                phase_summaries[pid] = summary
+            elif isinstance(data, str):
+                phase_summaries[pid] = {"_raw": data[:200] + "..." if len(data) > 200 else data}
+
+        self.project_manager.save_state(
+            project_id,
+            current_phase_index=phase_index,
+            completed_phases=[p for p in phase_summaries.keys()
+                              if gate_results.get(p, {}).get("status") in ("pass", "cond_pass")],
+            phase_outputs=phase_summaries,
+            gate_results=gate_results,
+            rework_history=rework_history,
+            phase_rework_counts=phase_rework_counts,
+            invalidated_phases=list(invalidated_phases),
+            status=status,
+        )
+
     def _run_project_workflow(self, user_request: str, intent: dict) -> str:
         """多阶段研究项目工作流, 按依赖关系依次执行各阶段, 每阶段需通过 Gate 检查。
+<<<<<<< HEAD
         支持跨Phase反馈环B自动回退 + 断点续传。"""
         project_id = intent.get("project_id") or f"project_{int(time.time())}"
         self._current_project_id = project_id
@@ -896,16 +986,60 @@ then: [回退到哪个 Phase, 做什么修正]
         all_outputs = {}
         gate_results = {}
         rework_history = []
+=======
+        支持跨Phase反馈环B自动回退 + 断点续传 + 状态持久化。"""
+>>>>>>> 42494b013f70880d89f7ea1670016e46966589d6
         phases_to_run = ["system_design", "problem_definition", "design",
                          "execution", "external_validation", "review", "writing",
                          "clinical_tool"]
 
-        # 🆕 追踪每个 Phase 的返工次数 (含跨Phase反馈计入)
-        phase_rework_counts = {p: 0 for p in phases_to_run}
-        # 🆕 标记被跨Phase反馈无效化的下游 Phase → 需重新执行
-        invalidated_phases = set()
+        # 🆕 断点续传: 检查是否有已存在的项目状态
+        existing_id = intent.get("project_id")
+        force_resume = intent.get("resume", False)
 
-        phase_index = 0
+        if existing_id:
+            saved = self.project_manager.load_state(existing_id)
+            if saved and saved.get("status") in ("running", "failed"):
+                # 续传已有项目
+                project_id = existing_id
+                self._current_project_id = project_id
+                all_outputs = saved.get("phase_outputs", {})
+                gate_results = saved.get("gate_results", {})
+                rework_history = saved.get("rework_history", [])
+                phase_rework_counts = saved.get("phase_rework_counts", {p: 0 for p in phases_to_run})
+                invalidated_phases = set(saved.get("invalidated_phases", []))
+                phase_index = saved.get("current_phase_index", 0)
+                print(f"[Orchestrator] 续传项目: {project_id} (从 Phase {phases_to_run[phase_index] if phase_index < len(phases_to_run) else 'done'} 继续)")
+            elif saved and saved.get("status") == "completed":
+                project_id = existing_id
+                self._current_project_id = project_id
+                print(f"[Orchestrator] 项目 {project_id} 已完成, 返回结果")
+                return self._aggregate_all_phases(
+                    phases_to_run, saved.get("phase_outputs", {}), project_id,
+                    saved.get("gate_results", {}), saved.get("rework_history", [])
+                )
+            elif force_resume:
+                print(f"[Orchestrator] 项目 {existing_id} 状态不存在, 无法续传")
+                return f"项目 {existing_id} 状态不存在。"
+            else:
+                # 提供了 project_id 但没有状态文件 → 创建新项目
+                project_id = existing_id
+                self._current_project_id = project_id
+                print(f"[Orchestrator] 新项目 (指定ID): {project_id}")
+                self.project_manager.create_project(user_request, self.active_division)
+                all_outputs, gate_results, rework_history = {}, {}, []
+                phase_rework_counts = {p: 0 for p in phases_to_run}
+                invalidated_phases = set()
+                phase_index = 0
+        else:
+            # 🆕 全新项目: 由 ProjectManager 生成唯一 ID
+            project_id = self.project_manager.create_project(user_request, self.active_division)
+            self._current_project_id = project_id
+            print(f"[Orchestrator] 启动新项目: {project_id} ({self.active_division})")
+            all_outputs, gate_results, rework_history = {}, {}, []
+            phase_rework_counts = {p: 0 for p in phases_to_run}
+            invalidated_phases = set()
+            phase_index = 0
         while phase_index < len(phases_to_run):
             phase_id = phases_to_run[phase_index]
             phase_def = PROJECT_PHASES.get(phase_id, {})
@@ -953,6 +1087,9 @@ then: [回退到哪个 Phase, 做什么修正]
                 self._backfill_gate_status("system_design", "pass")
                 print(f"  ✅ Phase 0: SDS 生成完成 → 进入 Phase 1")
                 phase_index += 1
+                self._checkpoint_state(project_id, phase_index, all_outputs,
+                                       gate_results, rework_history,
+                                       phase_rework_counts, invalidated_phases)
                 continue
 
             print(f"\n{'='*50}")
@@ -1164,6 +1301,10 @@ then: [回退到哪个 Phase, 做什么修正]
                 # 🆕 自适应调度: 记录 Gate 结果
                 self._record_gate_for_adaptive(phase_id, status)
                 phase_index += 1
+                # 🆕 状态持久化: 断点续传
+                self._checkpoint_state(project_id, phase_index, all_outputs,
+                                       gate_results, rework_history,
+                                       phase_rework_counts, invalidated_phases)
 
             elif status == "conditional_pass":
                 conditions = gate_result.get("conditions", [])
@@ -1176,6 +1317,10 @@ then: [回退到哪个 Phase, 做什么修正]
                 # 🆕 自适应调度: 记录 Gate 结果
                 self._record_gate_for_adaptive(phase_id, status)
                 phase_index += 1
+                # 🆕 状态持久化: 断点续传
+                self._checkpoint_state(project_id, phase_index, all_outputs,
+                                       gate_results, rework_history,
+                                       phase_rework_counts, invalidated_phases)
 
             elif status == "fail":
                 if rework_cnt >= max_rework:
@@ -1193,6 +1338,10 @@ then: [回退到哪个 Phase, 做什么修正]
                         reason=f"Gate 连续失败 {rework_cnt+1} 次",
                         gate_result=gate_result,
                     )
+                    self._checkpoint_state(project_id, phase_index, all_outputs,
+                                           gate_results, rework_history,
+                                           phase_rework_counts, invalidated_phases,
+                                           status="failed")
                     break
                 else:
                     fail_items = [c for c in gate_result.get("checks", []) if c.get("result") == "fail"]
@@ -1208,7 +1357,11 @@ then: [回退到哪个 Phase, 做什么修正]
                     })
                     # phase_index 不变 → 重新执行本 Phase
 
-        # 聚合
+        # 聚合 → 标记完成
+        self._checkpoint_state(project_id, phase_index, all_outputs,
+                               gate_results, rework_history,
+                               phase_rework_counts, invalidated_phases,
+                               status="completed")
         return self._aggregate_all_phases(phases_to_run, all_outputs, project_id, gate_results, rework_history)
 
     # ================================================================
@@ -2478,19 +2631,30 @@ then: [回退到哪个 Phase, 做什么修正]
                 print(f"  ⚠️ 基线变更处理失败 (不阻塞): {e}")
 
     def _find_project_dir(self, project_id: str) -> Optional[Path]:
-        """定位项目目录 (从 knowledge base vaults 搜索)"""
+        """定位项目工作目录 (按优先级搜索)。
+
+        1. Obsidian vault: {vault}/projects/{project_id}/
+        2. outputs/projects/: outputs/projects/{project_id}/
+        3. 直接路径: project_id 本身如果是已存在的目录
+        """
+        # 1. Obsidian vaults
         if hasattr(self, 'kb') and self.kb:
             vaults = getattr(self.kb, 'vaults', {})
             for _, vault_path in vaults.items():
                 candidate = Path(vault_path) / 'projects' / project_id
                 if candidate.exists():
                     return candidate
-        # fallback: 从 baseline_dir 推导
-        baseline_dir = getattr(self.config, 'baseline_dir', None)
-        if baseline_dir:
-            candidate = Path(baseline_dir).parent / project_id
-            if candidate.exists():
-                return candidate
+
+        # 2. outputs/projects/ (阶段 A)
+        candidate = self.config.projects_output_dir / project_id
+        if candidate.exists():
+            return candidate
+
+        # 3. 直接路径 (支持 --project-dir 显式传入绝对路径)
+        candidate = Path(project_id)
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
         return None
 
     def _ensure_project_dir(self, project_id: str) -> Optional[Path]:
@@ -2846,6 +3010,12 @@ cv_results.json 结构必须为:
         else:
             system_prompt = self.agent_loader.load_full_prompt(agent_id, include_fewshot=True)
         try:
+            # 🆕 速率限制 (Worker 模式下保护 LLM API)
+            if self.rate_limiter:
+                wait = self.rate_limiter.acquire()
+                if wait > 0.5:
+                    print(f"  ⏳ 速率限制等待 {wait:.1f}s")
+
             response = self.llm.chat(system_prompt=system_prompt, user_message=task_input)
             content = response.content
             success = True
@@ -2901,11 +3071,19 @@ cv_results.json 结构必须为:
             )
 
     def _append_run_log(self, **kwargs):
-        """追加一行运行日志到当天的 JSONL 文件。轻量零阻塞, 失败不影响主流程。"""
+        """追加一行运行日志到项目隔离的 JSONL 文件。轻量零阻塞, 失败不影响主流程。
+
+        目录结构:
+        - 有 project_id → outputs/projects/{project_id}/run_logs/{date}.jsonl
+        - 无 project_id → outputs/_shared/run_logs/{date}.jsonl
+        """
         try:
-            log_dir = getattr(self.config, 'run_log_dir', None)
-            if log_dir is None:
-                log_dir = self.config.project_root / "outputs" / "run_logs"
+            project_id = kwargs.get("project_id", "")
+            projects_dir = self.config.projects_output_dir
+            if project_id:
+                log_dir = projects_dir / project_id / "run_logs"
+            else:
+                log_dir = projects_dir / "_shared" / "run_logs"
             log_dir = Path(log_dir)
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
@@ -2919,7 +3097,8 @@ cv_results.json 结构必须为:
         简化为追加一条 gate summary 记录到日志。"""
         self._append_run_log(
             timestamp=datetime.now().isoformat(),
-            project_id="", division=self.active_division,
+            project_id=getattr(self, '_current_project_id', ''),
+            division=self.active_division,
             phase_id=phase_id, agent_id="_gate",
             success=True, degraded=False,
             wall_time_sec=0, input_tokens=0, output_tokens=0, output_len=0,

@@ -34,6 +34,10 @@ class BaselineManager:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    def _project_dir(self, project_id: str) -> Path:
+        """项目基线目录: {base_dir}/{project_id}/baselines/"""
+        return self.base_dir / project_id / "baselines"
+
     # ================================================================
     # 基线操作
     # ================================================================
@@ -53,7 +57,7 @@ class BaselineManager:
         Returns:
             BaselineRecord dict
         """
-        project_dir = self.base_dir / project_id
+        project_dir = self._project_dir(project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
 
         # 确定版本号
@@ -145,7 +149,7 @@ class BaselineManager:
         if not file_name:
             return None
 
-        file_path = self.base_dir / project_id / file_name
+        file_path = self._project_dir(project_id) / file_name
         if not file_path.exists():
             return None
 
@@ -157,7 +161,7 @@ class BaselineManager:
     def supersede(self, project_id: str, phase_id: str, version: str):
         """将一个基线标记为被取代 (上游修改后, 下游旧基线作废)"""
         file_path = (
-            self.base_dir / project_id /
+            self._project_dir(project_id) /
             f"baseline_{phase_id}_{version}.json"
         )
         if file_path.exists():
@@ -256,7 +260,7 @@ class BaselineManager:
         }
 
         # 追加到 change_requests.jsonl
-        project_dir = self.base_dir / project_id
+        project_dir = self._project_dir(project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
         cr_file = project_dir / "change_requests.jsonl"
         with open(cr_file, "a") as f:
@@ -266,7 +270,7 @@ class BaselineManager:
 
     def resolve_change_request(self, project_id: str, cr_id: str):
         """标记变更请求为已解决"""
-        project_dir = self.base_dir / project_id
+        project_dir = self._project_dir(project_id)
         if not project_dir.exists():
             return
         cr_file = project_dir / "change_requests.jsonl"
@@ -319,7 +323,7 @@ class BaselineManager:
 
     def _list_baselines(self, project_id: str, phase_id: str) -> list[dict]:
         """列出指定 Phase 的所有基线, 按版本排序"""
-        project_dir = self.base_dir / project_id
+        project_dir = self._project_dir(project_id)
         if not project_dir.exists():
             return []
 
@@ -345,7 +349,7 @@ class BaselineManager:
 
     def _read_index(self, project_id: str) -> dict:
         """读取基线索引"""
-        index_path = self.base_dir / project_id / "baseline_index.json"
+        index_path = self._project_dir(project_id) / "baseline_index.json"
         if not index_path.exists():
             return {}
         try:
@@ -358,7 +362,7 @@ class BaselineManager:
         version: str, file_name: str,
     ):
         """更新基线索引"""
-        index_path = self.base_dir / project_id / "baseline_index.json"
+        index_path = self._project_dir(project_id) / "baseline_index.json"
         index = self._read_index(project_id)
 
         if phase_id not in index:
@@ -379,7 +383,7 @@ class BaselineManager:
     ) -> Optional[dict]:
         """加载指定版本的基线"""
         file_path = (
-            self.base_dir / project_id /
+            self._project_dir(project_id) /
             f"baseline_{phase_id}_{version}.json"
         )
         if not file_path.exists():
@@ -391,7 +395,7 @@ class BaselineManager:
 
     def _read_change_requests(self, project_id: str) -> list[dict]:
         """读取项目的所有变更请求"""
-        project_dir = self.base_dir / project_id
+        project_dir = self._project_dir(project_id)
         if not project_dir.exists():
             return []
         cr_file = project_dir / "change_requests.jsonl"

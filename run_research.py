@@ -61,6 +61,20 @@ def main():
     parser.add_argument("--division", "-d", default="all",
                         choices=["all", "geriatrics", "urology"],
                         help="限定事业部 (默认: all, 用于 kb_enrich 等工作流)")
+    parser.add_argument("--resume", "-r", default=None, metavar="PROJECT_ID",
+                        help="续传已存在的项目 (从中断点继续)")
+    parser.add_argument("--list-projects", action="store_true",
+                        help="列出所有项目及其状态")
+    parser.add_argument("--project-status", default=None, metavar="PROJECT_ID",
+                        help="查询指定项目的详细状态")
+    parser.add_argument("--worker", action="store_true",
+                        help="启动 Worker 守护进程 (消费项目队列)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Worker 进程数 (默认 1, 与 --worker 配合使用)")
+    parser.add_argument("--cleanup-locks", action="store_true",
+                        help="清理所有过期锁文件 (手动恢复)")
+    parser.add_argument("--project-dir", default=None, metavar="PATH",
+                        help="显式指定项目工作目录 (跳过自动发现)")
 
     args = parser.parse_args()
 
@@ -70,13 +84,13 @@ def main():
         config = load_config()
         log_dir = getattr(config, 'run_log_dir', None)
         if log_dir is None:
-            log_dir = config.project_root / "outputs" / "run_logs"
+            log_dir = config.projects_output_dir
 
         analyzer = RunAnalyzer(log_dir=str(log_dir))
         count = analyzer.load(days=args.analyze_days)
 
         if count == 0:
-            print("无运行数据。运行至少一个项目后数据将自动采集到 outputs/run_logs/。")
+            print("无运行数据。运行至少一个项目后数据将自动采集到 outputs/projects/。")
         elif args.analyze_json:
             print(json.dumps(analyzer.generate_json_summary(), ensure_ascii=False, indent=2))
         else:
@@ -86,6 +100,73 @@ def main():
                 print(f"报告已保存到 {args.analyze_output}")
             else:
                 print(report)
+        return
+
+    # --list-projects / --project-status / --resume: 项目管理员命令, 不需要用户请求
+    if args.list_projects or args.project_status or args.resume:
+        config = load_config()
+        orchestrator = ResearchOrchestrator(config)
+
+        if args.list_projects:
+            print("=" * 60)
+            print("项目列表")
+            print("=" * 60)
+            print(orchestrator.list_projects())
+            return
+
+        if args.project_status:
+            print(orchestrator.project_status(args.project_status))
+            return
+
+        if args.resume:
+            print(f"续传项目: {args.resume}")
+            result = orchestrator.run_resume(args.resume)
+            print("\n" + "=" * 60)
+            print(result)
+            print("=" * 60)
+            return
+
+    # --worker: 启动 Worker 守护进程
+    if args.worker:
+        from engine.core.worker import WorkerDaemon
+
+        config = load_config()
+        num_workers = min(args.workers, os.cpu_count() or 2, 3)
+
+        if num_workers == 1:
+            worker = WorkerDaemon(config, worker_id=0)
+            worker.run_forever()
+        else:
+            import multiprocessing
+            print(f"启动 {num_workers} 个 Worker 进程...")
+
+            def _run_worker(wid: int):
+                worker = WorkerDaemon(config, worker_id=wid)
+                worker.run_forever()
+
+            procs = []
+            for i in range(num_workers):
+                p = multiprocessing.Process(target=_run_worker, args=(i,))
+                p.start()
+                procs.append(p)
+
+            try:
+                for p in procs:
+                    p.join()
+            except KeyboardInterrupt:
+                print("\n收到中断信号, 停止所有 Worker...")
+                for p in procs:
+                    p.terminate()
+                for p in procs:
+                    p.join()
+        return
+
+    # --cleanup-locks: 清理过期锁
+    if args.cleanup_locks:
+        from engine.core.project_lock import cleanup_stale_locks
+        config = load_config()
+        n = cleanup_stale_locks(config.projects_output_dir)
+        print(f"已清理 {n} 个过期锁文件。")
         return
 
     # 检查 API Key (根据 provider 检查对应的 key)
@@ -157,7 +238,7 @@ def main():
         print(f"摘要: {intent['summary']}")
         print("\n[DRY RUN] 未实际调用 LLM。")
     else:
-        result = orchestrator.run(user_request)
+        result = orchestrator.run(user_request, project_dir=args.project_dir)
         print("\n" + "=" * 60)
         print(result)
         print("=" * 60)
