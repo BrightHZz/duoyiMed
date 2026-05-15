@@ -891,6 +891,7 @@ then: [回退到哪个 Phase, 做什么修正]
         project_id = intent.get("project_id") or f"project_{int(time.time())}"
         self._current_project_id = project_id
         print(f"[Orchestrator] 启动项目工作流: {project_id}")
+        self._ensure_project_dir(project_id)
 
         all_outputs = {}
         gate_results = {}
@@ -1413,8 +1414,10 @@ then: [回退到哪个 Phase, 做什么修正]
         """
         proj_dir = self._find_project_dir(project_id)
         if not proj_dir:
+            proj_dir = self._ensure_project_dir(project_id)
+        if not proj_dir:
             return {
-                "error": f"Cannot locate project directory for {project_id}",
+                "error": f"Cannot locate or create project directory for {project_id}",
                 "_multi_step": "True",
                 "_runner_error": "project_dir_not_found",
             }
@@ -2487,6 +2490,27 @@ then: [回退到哪个 Phase, 做什么修正]
         if baseline_dir:
             candidate = Path(baseline_dir).parent / project_id
             if candidate.exists():
+                return candidate
+        return None
+
+    def _ensure_project_dir(self, project_id: str) -> Optional[Path]:
+        """创建项目目录, 优先 vaults, fallback 到 baselines 兄弟目录"""
+        # 优先从 knowledge base vaults
+        if hasattr(self, 'kb') and self.kb:
+            vaults = getattr(self.kb, 'vaults', {})
+            for _, vault_path in vaults.items():
+                candidate = Path(vault_path) / 'projects' / project_id
+                candidate.mkdir(parents=True, exist_ok=True)
+                print(f"  ✅ 创建项目目录: {candidate}")
+                return candidate
+        # fallback: outputs/baselines/<project_id> 存在 → 使用 outputs/<project_id>
+        baseline_dir = getattr(self.config, 'baseline_dir', None)
+        if baseline_dir:
+            baseline_proj = Path(baseline_dir) / project_id
+            if baseline_proj.exists():
+                candidate = Path(baseline_dir).parent / project_id
+                candidate.mkdir(parents=True, exist_ok=True)
+                print(f"  ✅ 创建项目目录 (baseline fallback): {candidate}")
                 return candidate
         return None
 
