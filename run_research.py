@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-计算老年医学研究 Agent 编排引擎 — 启动入口
+DuoyiMed Agent 编排引擎 — 启动入口
 
 用法:
     # 交互模式
@@ -36,7 +36,7 @@ from engine.config import load_config
 
 def main():
     parser = argparse.ArgumentParser(
-        description="计算老年医学研究 Agent 编排引擎",
+        description="DuoyiMed Agent 编排引擎",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -197,8 +197,8 @@ def main():
     # 打印启动信息
     print("""
 ╔══════════════════════════════════════════════════════════╗
-║     计算老年医学研究 Agent 编排引擎 v0.1                    ║
-║     Computational Geriatrics Research Orchestrator       ║
+║     DuoyiMed Agent 编排引擎 v0.1                           ║
+║     DuoyiMed Research Orchestrator                        ║
 ╚══════════════════════════════════════════════════════════╝
 """)
     print(f"  LLM: {config.llm_provider}/{config.llm_model}")

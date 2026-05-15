@@ -261,7 +261,7 @@ if phase_id == "system_design":
 **新增 `_run_system_design()`**：
 
 ```python
-SDS_SYSTEM_PROMPT = """你是计算医学研究公司的总体设计师 (System Architect)。
+SDS_SYSTEM_PROMPT = """你是DuoyiMed的总体设计师 (System Architect)。
 你的职责是为每个新研究项目设计《系统设计说明书》(SDS)。
 
 SDS 不等同于统计分析计划 (SAP)，SDS 定义的是整个研究系统的架构：

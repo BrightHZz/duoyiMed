@@ -766,7 +766,7 @@ class ResearchOrchestrator:
     # ================================================================
 
     SDS_SYSTEM_PROMPT = (
-        "你是计算医学研究公司的总体设计师 (System Architect)。"
+        "你是DuoyiMed的总体设计师 (System Architect)。"
         "你的职责是为每个新研究项目设计《系统设计说明书》(SDS)——项目蓝图。\n\n"
         "SDS 不等同于统计分析计划 (SAP)。SDS 定义的是整个研究系统的架构：子系统分解、接口格式和 SLA、质量闸门标准、跨 Phase 反馈触发条件、关键假设与风险。\n\n"
         "你需要像航天工程的总体设计部一样思考：顶层设计、接口标准化、全系统集成验证。"
@@ -774,7 +774,7 @@ class ResearchOrchestrator:
 
     # 🆕 研讨厅辩论主持人 System Prompt — 钱学森综合集成研讨厅
     DEBATE_MODERATOR_SYSTEM_PROMPT = (
-        "你是计算医学研究公司的研讨厅辩论主持人 (Debate Moderator)。"
+        "你是DuoyiMed的研讨厅辩论主持人 (Debate Moderator)。"
         "你不代表任何一方的立场——你只负责整理、识别和呈现。\n\n"
         "你的核心信念: 分歧不是问题，分歧是需要人工判断的关键信息点。"
         "流水线审查中容易被掩盖的分歧，在并行辩论模式中被显式呈现。\n\n"

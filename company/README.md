@@ -1,4 +1,4 @@
-# 计算医学研究公司 (Computational Medicine Research Co.)
+# DuoyiMed (DuoyiMed)
 
 > 多事业部 LLM Agent 协作平台，覆盖从临床问题定义、数据分析到论文投稿的全流程科研自动化。
 
