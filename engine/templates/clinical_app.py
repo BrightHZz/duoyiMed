@@ -244,7 +244,7 @@ if predict_btn:
 # ── Footer ───────────────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    "Powered by Computational Medicine Research Co. | "
+    "Powered by DuoyiMed | "
     "Model trained with scikit-learn/XGBoost | "
     "External validation pending before clinical use"
 )

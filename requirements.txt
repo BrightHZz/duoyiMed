@@ -1,4 +1,4 @@
-# 计算老年医学研究 Agent 编排引擎 — 依赖
+# DuoyiMed Agent 编排引擎 — 依赖
 
 # LLM SDK
 anthropic>=0.39.0
