@@ -976,19 +976,7 @@ then: [回退到哪个 Phase, 做什么修正]
 
     def _run_project_workflow(self, user_request: str, intent: dict) -> str:
         """多阶段研究项目工作流, 按依赖关系依次执行各阶段, 每阶段需通过 Gate 检查。
-<<<<<<< HEAD
-        支持跨Phase反馈环B自动回退 + 断点续传。"""
-        project_id = intent.get("project_id") or f"project_{int(time.time())}"
-        self._current_project_id = project_id
-        print(f"[Orchestrator] 启动项目工作流: {project_id}")
-        self._ensure_project_dir(project_id)
-
-        all_outputs = {}
-        gate_results = {}
-        rework_history = []
-=======
         支持跨Phase反馈环B自动回退 + 断点续传 + 状态持久化。"""
->>>>>>> 42494b013f70880d89f7ea1670016e46966589d6
         phases_to_run = ["system_design", "problem_definition", "design",
                          "execution", "external_validation", "review", "writing",
                          "clinical_tool"]
@@ -1040,6 +1028,9 @@ then: [回退到哪个 Phase, 做什么修正]
             phase_rework_counts = {p: 0 for p in phases_to_run}
             invalidated_phases = set()
             phase_index = 0
+
+        self._ensure_project_dir(project_id)
+
         while phase_index < len(phases_to_run):
             phase_id = phases_to_run[phase_index]
             phase_def = PROJECT_PHASES.get(phase_id, {})
