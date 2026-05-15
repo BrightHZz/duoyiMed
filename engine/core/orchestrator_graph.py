@@ -504,9 +504,10 @@ class ResearchOrchestrator:
         self._adaptive_scheduler = None     # AdaptiveScheduler 实例
 
         # 🆕 技术状态基线管理器 (钱学森总体设计部 — 基线冻结+变更控制)
+        # 基线按项目隔离: outputs/projects/{project_id}/baselines/
         baseline_dir = getattr(self.config, 'baseline_dir', None)
         if baseline_dir is None:
-            baseline_dir = self.config.project_root / "outputs" / "baselines"
+            baseline_dir = self.config.projects_output_dir
         self.baseline_manager = BaselineManager(Path(baseline_dir))
 
     def _get_phase_agents(self, phase_id: str) -> list:
@@ -764,7 +765,8 @@ class ResearchOrchestrator:
 
         log_dir = getattr(self.config, 'run_log_dir', None)
         if log_dir is None:
-            log_dir = self.config.project_root / "outputs" / "run_logs"
+            # 使用 projects_output_dir 扫描所有项目日志 + 共享日志
+            log_dir = self.config.projects_output_dir
 
         self._run_analyzer = RunAnalyzer(log_dir=str(log_dir))
         n = self._run_analyzer.load(days=90)
@@ -2877,11 +2879,19 @@ cv_results.json 结构必须为:
             )
 
     def _append_run_log(self, **kwargs):
-        """追加一行运行日志到当天的 JSONL 文件。轻量零阻塞, 失败不影响主流程。"""
+        """追加一行运行日志到项目隔离的 JSONL 文件。轻量零阻塞, 失败不影响主流程。
+
+        目录结构:
+        - 有 project_id → outputs/projects/{project_id}/run_logs/{date}.jsonl
+        - 无 project_id → outputs/_shared/run_logs/{date}.jsonl
+        """
         try:
-            log_dir = getattr(self.config, 'run_log_dir', None)
-            if log_dir is None:
-                log_dir = self.config.project_root / "outputs" / "run_logs"
+            project_id = kwargs.get("project_id", "")
+            projects_dir = self.config.projects_output_dir
+            if project_id:
+                log_dir = projects_dir / project_id / "run_logs"
+            else:
+                log_dir = projects_dir / "_shared" / "run_logs"
             log_dir = Path(log_dir)
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
@@ -2895,7 +2905,8 @@ cv_results.json 结构必须为:
         简化为追加一条 gate summary 记录到日志。"""
         self._append_run_log(
             timestamp=datetime.now().isoformat(),
-            project_id="", division=self.active_division,
+            project_id=getattr(self, '_current_project_id', ''),
+            division=self.active_division,
             phase_id=phase_id, agent_id="_gate",
             success=True, degraded=False,
             wall_time_sec=0, input_tokens=0, output_tokens=0, output_len=0,

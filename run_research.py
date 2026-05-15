@@ -70,13 +70,13 @@ def main():
         config = load_config()
         log_dir = getattr(config, 'run_log_dir', None)
         if log_dir is None:
-            log_dir = config.project_root / "outputs" / "run_logs"
+            log_dir = config.projects_output_dir
 
         analyzer = RunAnalyzer(log_dir=str(log_dir))
         count = analyzer.load(days=args.analyze_days)
 
         if count == 0:
-            print("无运行数据。运行至少一个项目后数据将自动采集到 outputs/run_logs/。")
+            print("无运行数据。运行至少一个项目后数据将自动采集到 outputs/projects/。")
         elif args.analyze_json:
             print(json.dumps(analyzer.generate_json_summary(), ensure_ascii=False, indent=2))
         else:

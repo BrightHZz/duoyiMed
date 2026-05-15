@@ -1,8 +1,13 @@
 """
 公司运行数据分析器 — 系统辨识模块
 
-读取 outputs/run_logs/*.jsonl 累积的运行日志, 聚合统计并生成 Markdown 报告。
+读取运行日志 JSONL 文件, 聚合统计并生成 Markdown 报告。
 零外部依赖 (json + statistics 标准库)。
+
+日志目录结构 (v2):
+  outputs/projects/{project_id}/run_logs/*.jsonl   — 项目隔离日志
+  outputs/_shared/run_logs/*.jsonl                 — 共享日志 (轻量工作流)
+  outputs/run_logs/*.jsonl                         — 旧版兼容
 
 用法:
     python -m engine.core.run_analyzer                    # 分析全部数据
@@ -22,6 +27,9 @@ class RunAnalyzer:
     """
     读取 run_logs JSONL 文件, 聚合统计, 生成 Markdown 报告。
 
+    支持新版项目隔离目录 (outputs/projects/{id}/run_logs/) 和
+    旧版扁平目录 (outputs/run_logs/)。
+
     用法:
         analyzer = RunAnalyzer(log_dir="outputs/run_logs")
         analyzer.load(days=90)
@@ -34,18 +42,54 @@ class RunAnalyzer:
         self.start_date: Optional[str] = None
         self.end_date: Optional[str] = None
 
+    def _find_log_dirs(self) -> list[Path]:
+        """发现所有日志目录。
+
+        检测策略:
+        1. 如果 log_dir 指向 projects/ 目录 → 扫描所有 {project_id}/run_logs/ + _shared/run_logs/
+        2. 如果 log_dir 是旧版 outputs/run_logs/ → 直接使用
+        """
+        log_dir = self.log_dir
+        if not log_dir.exists():
+            return []
+
+        # 检测是否为 projects 根目录 (包含项目子目录或 _shared)
+        if (log_dir.name == "projects" or
+                (log_dir / "_shared" / "run_logs").exists() or
+                any((d / "run_logs").exists() for d in log_dir.iterdir() if d.is_dir() and d.name != "_shared")):
+            dirs = []
+            # 扫描项目隔离日志
+            for project_dir in log_dir.iterdir():
+                if project_dir.is_dir() and project_dir.name != "_shared":
+                    run_logs = project_dir / "run_logs"
+                    if run_logs.exists():
+                        dirs.append(run_logs)
+            # 共享日志
+            shared = log_dir / "_shared" / "run_logs"
+            if shared.exists():
+                dirs.append(shared)
+            return dirs
+
+        # 旧版: log_dir 直接是 run_logs 目录
+        return [log_dir]
+
     def load(self, days: int = 0) -> int:
         """加载日志文件。days=0 表示全部, days=30 表示最近 30 天。"""
-        if not self.log_dir.exists():
+        log_dirs = self._find_log_dirs()
+        if not log_dirs:
             return 0
 
-        files = sorted(self.log_dir.glob("*.jsonl"))
+        # 收集所有 .jsonl 文件
+        all_files = []
+        for d in log_dirs:
+            all_files.extend(sorted(d.glob("*.jsonl")))
+
         if days > 0:
             cutoff = datetime.now() - timedelta(days=days)
-            files = [f for f in files if self._file_date(f) >= cutoff.date()]
+            all_files = [f for f in all_files if self._file_date(f) >= cutoff.date()]
 
         self.records = []
-        for f in files:
+        for f in all_files:
             try:
                 for line in f.read_text().splitlines():
                     line = line.strip()
@@ -349,7 +393,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="公司运行数据分析器")
-    parser.add_argument("--log-dir", default="outputs/run_logs", help="日志目录")
+    parser.add_argument("--log-dir", default="outputs/projects", help="日志根目录 (projects/ 或旧版 run_logs/)")
     parser.add_argument("--days", type=int, default=0, help="分析天数 (0=全部)")
     parser.add_argument("--output", "-o", default=None, help="输出文件 (默认 stdout)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 格式")

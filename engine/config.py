@@ -151,7 +151,10 @@ class EngineConfig:
     verbose: bool = True
 
     # --- 运行日志 ---
-    run_log_dir: Path = field(default=None)  # 运行日志目录, None=自动设为 outputs/run_logs/
+    run_log_dir: Path = field(default=None)  # 运行日志目录, None=自动基于 projects_output_dir 推导
+
+    # --- 项目产出 ---
+    projects_output_dir: Path = field(default=None)  # 项目隔离产出根目录, None=自动设为 outputs/projects/
 
     # --- 共享服务 ---
     shared_services_pool_size: int = 1  # 每个共享服务同时服务的事业部数
@@ -218,7 +221,11 @@ class EngineConfig:
                 "urology": Path(obs_home) / "miNiaoWaiKe",
             }
 
-        # 4. 数据源 — 从环境变量推断路径
+        # 4. 项目产出目录 — 并发生产时每个项目独立子目录
+        if self.projects_output_dir is None:
+            self.projects_output_dir = self.project_root / "outputs" / "projects"
+
+        # 5. 数据源 — 从环境变量推断路径
         if not self.data_sources:
             self.data_sources = _build_data_sources()
 
