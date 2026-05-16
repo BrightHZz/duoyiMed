@@ -1,0 +1,248 @@
+{
+  "dataset": "CLHLS 2018 Cross-sectional",
+  "total_rows": 15874,
+  "total_columns": 720,
+  "numeric_columns": 720,
+  "string_columns": 41,
+  "sex": {
+    "Male": 6925,
+    "Female": 8949,
+    "Male_pct": 43.6
+  },
+  "age": {
+    "N": 15866,
+    "mean": 85.5,
+    "median": 85.0,
+    "std": 11.7,
+    "min": 50.0,
+    "max": 117.0,
+    "by_group": {
+      "<65": 374,
+      "65-74": 3405,
+      "75-84": 4297,
+      "85-94": 3950,
+      "95+": 3840
+    }
+  },
+  "residence": {
+    "City": 3542,
+    "Town": 5238,
+    "Rural": 7094
+  },
+  "ethnicity": {
+    "Han": 12860,
+    "Other": 3014,
+    "Han_pct": 81.0
+  },
+  "marital": {
+    "Widowed": 9004,
+    "Married": 6135,
+    "Separated": 276,
+    "Never Married": 140,
+    "Divorced": 52,
+    "code_8.0": 4,
+    "code_9.0": 2
+  },
+  "education": {
+    "mean_years": 3.2,
+    "median_years": 0.0,
+    "illiteracy_pct": 50.4,
+    "N": 13500
+  },
+  "living_arrangement": {
+    "With household": 12497,
+    "Alone": 2477,
+    "Institution": 574,
+    "code_9.0": 1
+  },
+  "disease_prevalence": {
+    "Hypertension": {
+      "rate_pct": 42.9,
+      "N": 14583
+    },
+    "Diabetes": {
+      "rate_pct": 10.1,
+      "N": 14030
+    },
+    "Heart Disease": {
+      "rate_pct": 18.0,
+      "N": 14099
+    },
+    "Stroke/CVD": {
+      "rate_pct": 11.8,
+      "N": 14029
+    },
+    "Respiratory": {
+      "rate_pct": 11.3,
+      "N": 13784
+    },
+    "Cataract": {
+      "rate_pct": 14.7,
+      "N": 13935
+    },
+    "Glaucoma": {
+      "rate_pct": 2.1,
+      "N": 13779
+    },
+    "Cancer": {
+      "rate_pct": 1.6,
+      "N": 13191
+    },
+    "Gastric Ulcer": {
+      "rate_pct": 4.8,
+      "N": 13862
+    },
+    "Parkinson": {
+      "rate_pct": 0.9,
+      "N": 13879
+    },
+    "Arthritis": {
+      "rate_pct": 11.5,
+      "N": 13972
+    },
+    "Dementia": {
+      "rate_pct": 2.6,
+      "N": 13943
+    },
+    "Dyslipidemia": {
+      "rate_pct": 5.4,
+      "N": 13754
+    },
+    "Rheumatism": {
+      "rate_pct": 5.8,
+      "N": 13862
+    },
+    "Chronic Nephritis": {
+      "rate_pct": 1.1,
+      "N": 13783
+    }
+  },
+  "multimorbidity": {
+    "mean_count": 1.29,
+    "none_pct": 35.4,
+    "ge2_pct": 33.6,
+    "ge3_pct": 16.4,
+    "distribution": {
+      "0": 5615,
+      "1": 4928,
+      "2": 2733,
+      "3": 1402,
+      "4": 622,
+      "5": 314,
+      "6": 142,
+      "7": 71,
+      "8": 32,
+      "9": 9,
+      "11": 2,
+      "12": 1,
+      "15": 3
+    }
+  },
+  "adl": {
+    "Bathing": {
+      "independent_pct": 75.2,
+      "N": 15692
+    },
+    "Dressing": {
+      "independent_pct": 85.6,
+      "N": 15635
+    },
+    "Toileting": {
+      "independent_pct": 86.0,
+      "N": 15705
+    },
+    "Transferring": {
+      "independent_pct": 87.7,
+      "N": 15605
+    },
+    "Continence": {
+      "independent_pct": 92.6,
+      "N": 15691
+    },
+    "Feeding": {
+      "independent_pct": 91.2,
+      "N": 15420
+    },
+    "any_disability_pct": 25.1,
+    "deficit_distribution": {
+      "0": 11120,
+      "1": 1437,
+      "2": 460,
+      "3": 345,
+      "4": 493,
+      "5": 583,
+      "6": 662
+    }
+  },
+  "iadl": {
+    "Visit neighbors": 71.9,
+    "Shopping": 62.6,
+    "Cook": 62.6,
+    "Wash clothes": 63.8,
+    "Walk 1km": 50.6,
+    "Carry 5kg": 51.0,
+    "Crouch 3x": 43.1,
+    "Public transit": 46.8
+  },
+  "smoking_pct": 14.8,
+  "drinking_pct": 14.1,
+  "exercise_pct": 29.9,
+  "self_rated_health": {
+    "good_or_better_pct": 47.0,
+    "bad_or_worse_pct": 14.1,
+    "N": 14442
+  },
+  "self_rated_qol": {
+    "good_or_better_pct": 69.8,
+    "N": 14436
+  },
+  "mental_b33": {
+    "label": "Sad/Depressed",
+    "often_sometimes_pct": 23.0,
+    "N": 13784
+  },
+  "mental_b38": {
+    "label": "Lonely",
+    "often_sometimes_pct": 26.8,
+    "N": 13882
+  },
+  "mental_b39": {
+    "label": "Hopeless",
+    "often_sometimes_pct": 14.9,
+    "N": 13629
+  },
+  "anthropometrics": {
+    "weight_mean_kg": 54.1,
+    "weight_median_kg": 53.0,
+    "weight_unit": "kg",
+    "height_mean_cm": 155.0,
+    "height_median_cm": 155.0,
+    "bmi_mean": 22.32,
+    "bmi_median": 22.03,
+    "bmi_N": 14489,
+    "bmi_categories": {
+      "Underweight": 2467,
+      "Normal": 7523,
+      "Overweight": 3376,
+      "Obese": 1123
+    },
+    "bmi_underweight_pct": 17.0,
+    "bmi_obese_pct": 7.8
+  },
+  "blood_pressure": {
+    "systolic_mean_mmHg": 139.3,
+    "sbp_ge140_pct": 44.5,
+    "sbp_130_139_pct": 23.1,
+    "N": 15589
+  },
+  "fall": {
+    "past_year_pct": 22.5,
+    "N": 15468
+  },
+  "missing_data": {
+    "complete_vars": 7,
+    "le_5pct_missing": 221,
+    "le_10pct_missing": 261,
+    "gt_50pct_missing": 334
+  }
+}
