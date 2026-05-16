@@ -75,8 +75,8 @@ Phase 6: 论文撰写 ──── Gate 6 ────
   → 🆕 Python+LLM 混合执行 (2026-05-12 改造): Python 脚本强制阻断确定性检查, LLM Agent 负责语义评估
   → 执行序列: run_preflight.py → generate_figures.py → generate_tables.py → [编排器写 sections] → run_humanize.py (+ LLM 语义审查) → run_assembly.py → run_gate6.py (+ LLM Gate 审查)
   → 🆕 基线合规检查: figures 必须从 Phase 3 baseline 读取数据, 禁止从模型对象重新提取 (2026-05-11 新增)
-  → Gate 6 共 28 项检查, 分两层:
-    · Python auto checks (24 项): 存在性/格式性/数值一致性 — 确定性规则, regex/diff 即可判定, 不可口头通过
+  → Gate 6 共 29 项检查, 分两层:
+    · Python auto checks (25 项): 存在性/格式性/数值一致性 — 确定性规则, regex/diff 即可判定, 不可口头通过
     · LLM semantic checks (4 项): 结构语义/去AI味/缩写/一致性 — 需 LLM 理解上下文, 仅 regex 会漏判 (详见下方"Python/LLM 分工表")
     · 前置检查: SAP存在 + 期刊需求锁定
     · 交付件 (两层结构): 零件层: sections/*.md + tables/*.md + figures/*.png (root, 供 humanize/assembly 消费); 投稿层: submission/manuscript.md + submission/tables/*.csv + submission/figures/*.png + submission/figures/*.tiff (仅投稿文件)
@@ -375,7 +375,7 @@ python run_research.py --analyze  # 生成运行状态报告
 
 > **强制**: `generate_figures.py` 和 `generate_tables.py` 输出 caption/table 中的所有数值必须按上述标准舍入, 禁止输出 raw float (如 `0.8423` → 应为 `0.842`)。`check_numerical_precision_consistency` 跨 manuscript/tables/figures 交叉检查同指标精度一致性, 不一致 → Gate 6 FAIL。
 
-### Phase 6 完整 Gate Check 清单 (28 项 auto: 24 存在性/格式性 + 4 数值一致性)
+### Phase 6 完整 Gate Check 清单 (29 项 auto: 25 存在性/格式性 + 4 数值一致性)
 
 | # | 检查项 | 检查目标层 | 通过标准 |
 |---|--------|----------|---------|
@@ -408,6 +408,7 @@ python run_research.py --analyze  # 生成运行状态报告
 | **26** | **🆕 正文数值可追溯** | 投稿层 | submission/manuscript.md 中所有 XX.X% / X.XXXX 格式的数值可追溯到 cv_results.json 或 tables/*.md (2026-05-11 新增) |
 | **27** | **🆕 Figure 产自基线数据** | 投稿层 | generate_figures.py 中每个图的数据源可追溯到 Phase 3 baseline 文件, 禁止从模型对象重新提取 (2026-05-11 新增) |
 | **28** | **🆕 投稿层结构完整性** | **投稿层** | `submission/` 下无 `sections/` 目录 (2026-05-12 新增) + `submission/figures/` 下仅 `.png`/`.tiff` + `submission/tables/` 下仅 `.csv` + `submission/manuscript.md` 存在 + `submission/manuscript.md` 中不含 `[Classic` 标注 (2026-05-12 新增, 起因: Classic 内部元数据未被 assembly strip 流入投稿层) |
+| **29** | **🆕 Figure 元素防重叠** | 投稿层 | `generate_figures.py` 必须含 constrained_layout/tight_layout + 图例外置(>3条目时+bbox_to_anchor) + 刻度标签旋转(>8个或>5字符时) + dpi≥300 (2026-05-16 新增) |
 
 ### Phase 6 Python+LLM 混合执行 (2026-05-12 新增/改造)
 
@@ -426,7 +427,7 @@ python run_research.py --analyze  # 生成运行状态报告
 4. [编排器调用 scientific-writer]      → 撰写 sections/*.md (LLM, 唯一需要创造力的步骤)
 5. python run_humanize.py + LLM review  → 两层: Python 扫描禁用词/过渡词/hedge + LLM 评估自然度改善
 6. python run_assembly.py               → exit 0 = 投稿层完整, exit 1 = FAIL (纯 Python, 含全部否定约束)
-7. python run_gate6.py + LLM Gate       → 两层: Python 执行 24 项确定性 auto check + LLM 执行 4 项语义检查
+7. python run_gate6.py + LLM Gate       → 两层: Python 执行 25 项确定性 auto check + LLM 执行 4 项语义检查
 ```
 
 **各脚本职责、阻断条件与 LLM 集成**:
@@ -438,7 +439,7 @@ python run_research.py --analyze  # 生成运行状态报告
 | `generate_tables.py` | 从 cv_results.json 生成 Table 1/2/3 的 .csv 和 .md | — (无需 LLM) |
 | `run_humanize.py` + LLM | 扫描所有 sections/*.md: banned > 0 或 trans > 3 → exit 1 | 评估去 AI 味改写是否**真正改善了自然度** (非表面替换): 句子是否仍机械、段落是否有节奏变化、hedge 是否适度而非全部删除 → FAIL 则阻断 |
 | `run_assembly.py` | 拼接 manuscript + strip Classic + 复制 figures tables → submission/ + 5 条否定约束 + 自检 | — (纯确定性操作, 无需 LLM) |
-| `run_gate6.py` + LLM Gate | 24 项 Python auto check: 文件存在/命名/字数/DOI/regex → exit 1 | 4 项 LLM semantic check (见下方 Gate 6 分工表): Discussion 七段语义/Methods↔Results 对应/缩写引入/整体质量 → 任何 FAIL 阻断 |
+| `run_gate6.py` + LLM Gate | 25 项 Python auto check: 文件存在/命名/字数/DOI/regex → exit 1 | 4 项 LLM semantic check (见下方 Gate 6 分工表): Discussion 七段语义/Methods↔Results 对应/缩写引入/整体质量 → 任何 FAIL 阻断 |
 
 **编排器正确的 Phase 6 执行命令**:
 ```bash
@@ -460,7 +461,7 @@ python run_humanize.py || exit 1
 # 步骤 5: 组装投稿层 (纯确定性)
 python engine/scripts/run_assembly.py --project-dir . || exit 1
 
-# 步骤 6: Gate 6 (28 项 Python auto check + 4 项 LLM semantic check)
+# 步骤 6: Gate 6 (29 项 Python auto check + 4 项 LLM semantic check)
 python engine/scripts/run_gate6.py --project-dir . || exit 1
 
 echo "Phase 6 complete — Gate 6 PASS"
@@ -484,7 +485,7 @@ echo "Phase 7 complete — Gate 7 PASS"
 
 正则能判定的归 Python，需理解语义的归 LLM。任一 FAIL 均阻断。
 
-**Python auto checks (26 项，确定性)**:
+**Python auto checks (27 项，确定性)**:
 
 | # | 检查项 | 为什么 Python 足够 |
 |---|--------|-------------------|
@@ -508,6 +509,7 @@ echo "Phase 7 complete — Gate 7 PASS"
 | 27b | 🆕 数值精度一致性 | 跨 manuscript/tables/figures 交叉检查同指标小数位数统一 — 防止 figure raw float(4位) vs manuscript(3位) 不一致 (2026-05-13 新增) |
 | 21a | 🆕 Discussion 无任何形式子标题 | regex 多模式扫描: `###` / `**粗体行**`(≤6词) / `___下划线___` / 全大写段名 / 编号段名(如 `1. Findings`) — 任一命中 → FAIL (2026-05-14 新增, 起因: Agent 用 `**Principal Findings**` 绕过 `###` 检查) |
 | 28 | 投稿层结构完整性 | `os.path.exists()` + glob + regex `[Classic` |
+| **29** | **🆕 Figure 元素防重叠** | 扫描 `generate_figures.py`: constrained_layout 或 tight_layout 调用; 图例>3条目时 bbox_to_anchor; tick_params rotation 当 x 标签>8; savefig dpi≥300; 禁止 plt.show() — 任一缺失 → FAIL (2026-05-16 新增) |
 
 **LLM semantic checks (4 项，需语义理解)**:
 
@@ -608,6 +610,77 @@ with open(FIG_DIR / 'Figure4_feature-importance_data.json', 'w') as f:
 ```
 
 **与 Gate 6 的对齐**: 命名格式检查已嵌入 Gate 6 #6 的通过标准（"文件名匹配 `Figure[N]_[descriptor].[ext]` 格式"）。
+
+### Phase 6 Figure 防重叠规范 (2026-05-16 新增)
+
+> **实现状态**: `check_figure_no_overlap` 已注册到 Gate 6 auto checks | `generate_figures.py` 强制实现
+
+**背景**: 此前 `generate_figures.py` 产出的图表存在图例遮挡数据、刻度标签拥挤堆叠、多面板子图间距不足等问题，投稿时被审稿人指出可读性差。根源是 figure 脚本未强制布局约束。
+
+**强制规则 (6 条)**:
+
+```
+1. 全局布局约束
+   → 每张图 fig 创建后必须: fig.set_constrained_layout(True) 或最后调用 fig.tight_layout(pad=1.08)
+   → subplots 必须显式传 figsize≥(8,5) (单面板) 或 ≥(10,8) (多面板)
+   → 多面板间必须用 fig.subplots_adjust(wspace=0.3, hspace=0.4) 避免轴标签重叠
+
+2. 图例 (Legend) 防遮挡
+   → 图例条目 >3 时必须置于绘图区外: ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+   → 图例置于内部时不得遮挡数据曲线或关键标记点
+   → 图例背景必须半透明: ax.legend(framealpha=0.7)
+
+3. 刻度标签 (Tick Labels) 防重叠
+   → x 轴标签数量 >8 或标签文本平均长度 >5 字符时必须旋转: ax.tick_params(axis='x', rotation=45, ha='right')
+   → y 轴数值 >1000 时必须转为 k/M 单位或减少小数位
+   → 类别变量非均匀分布时使用 ax.set_xticks() 控制刻度数量 ≤10
+
+4. 文本标注 (Annotations) 防碰撞
+   → 曲线标注/数据标注使用 ax.annotate() 时必须设置 xytext 偏移, 禁止 text 直接覆在线/点上
+   → 多点标注 (>5 个 label) 推荐使用 adjustText 库自动排布
+   → 标注箭头 (arrowprops) 不得穿过其他文本
+
+5. 多面板间距
+   → subplots(nrows, ncols) 后必须调 fig.subplots_adjust() 或使用 constrained_layout
+   → 共享轴必须用 sharex/sharey, 且仅在最外轴显示 label
+
+6. 保存前检查
+   → savefig 前不得有任何 plt.show() 或 fig.show() (会清空 figure)
+   → savefig 时 bbox_inches='tight' 作为二次保障, dpi≥300
+```
+
+**generate_figures.py 代码样板**:
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+# 全局设置
+plt.rcParams['legend.framealpha'] = 0.7
+
+# 单图示例
+fig, ax = plt.subplots(figsize=(8, 5))
+fig.set_constrained_layout(True)
+
+ax.plot(x, y1, label='XGBoost')
+ax.plot(x, y2, label='Logistic Regression')
+ax.plot(x, y3, label='Random Forest')
+ax.plot(x, y4, label='LightGBM')
+
+# 图例 >3 条 → 外置
+ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', framealpha=0.7)
+
+# 密集 x 轴 → 旋转
+ax.tick_params(axis='x', rotation=45, ha='right')
+
+# 强制布局 + 保存
+fig.tight_layout(pad=1.08)
+fig.savefig(path, dpi=300, bbox_inches='tight')
+plt.close(fig)
+```
+
+**与 Gate 6 的对齐**: 新增 `check_figure_no_overlap` (见下方 Gate 6 清单 #30)。
+
+**编排器指令**: 调度 ml-engineer 执行 `generate_figures.py` 时，必须在任务上下文中注入本规范全部 6 条规则。
 
 ### Phase 5 新增 Auto Check 详情 ✅ 已实现
 
@@ -742,7 +815,7 @@ downstream_consumers:
 2. 在 `GATE_DEFINITIONS` 注册到对应 Phase
 3. 在 `PROJECT_PHASES.expected_outputs` 声明产出文件 (如适用)
 
-**当前覆盖率**: 28+ 个 auto check 函数覆盖 6 个 Phase (2026-05-12 新增 `check_numerical_traceability` + `check_baseline_compliance` + `check_submission_structure_integrity` + `check_method_implementation_fidelity` + `check_figure_naming_convention`)。审计基线: `company/management/agent-gate-coverage-audit.md`
+**当前覆盖率**: 29+ 个 auto check 函数覆盖 6 个 Phase (2026-05-12 新增 `check_numerical_traceability` + `check_baseline_compliance` + `check_submission_structure_integrity` + `check_method_implementation_fidelity` + `check_figure_naming_convention`; 2026-05-16 新增 `check_figure_no_overlap`)。审计基线: `company/management/agent-gate-coverage-audit.md`
 
 **2026-05-11 对齐缺口审计** (起因: Figure 2 图文数据不一致事件):
 
