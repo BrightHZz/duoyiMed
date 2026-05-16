@@ -1277,6 +1277,7 @@ def _generate_roc_curve(y_true_path: str, y_prob_path: str, output_path: str) ->
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        import seaborn as sns
         from sklearn.metrics import roc_curve, auc
 
         y_true = np.loadtxt(y_true_path) if Path(y_true_path).exists() else None
@@ -1288,12 +1289,23 @@ def _generate_roc_curve(y_true_path: str, y_prob_path: str, output_path: str) ->
         fpr, tpr, _ = roc_curve(y_true, y_prob)
         roc_auc = auc(fpr, tpr)
 
-        fig, ax = plt.subplots(figsize=(6, 5))
-        ax.plot(fpr, tpr, 'b-', lw=2, label=f'AUC = {roc_auc:.4f}')
-        ax.plot([0, 1], [0, 1], 'k--', lw=1)
-        ax.set_xlabel('1 − Specificity')
-        ax.set_ylabel('Sensitivity')
-        ax.legend(loc='lower right')
+        sns.set_style("whitegrid")
+        sns.set_context("paper", font_scale=1.1)
+        fig, ax = plt.subplots(figsize=(7, 5.5))
+        ax.plot(fpr, tpr, color='#2166ac', lw=2.5, label=f'ROC (AUC = {roc_auc:.3f})')
+        ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.6, label='Random')
+        ax.fill_between(fpr, tpr, alpha=0.08, color='#2166ac')
+        ax.set_xlabel('1 − Specificity (False Positive Rate)', fontsize=11)
+        ax.set_ylabel('Sensitivity (True Positive Rate)', fontsize=11)
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        ax.tick_params(labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#cccccc')
+            spine.set_linewidth(0.5)
+        ax.legend(loc='lower right', frameon=True, framealpha=0.9, edgecolor='#dddddd',
+                  fontsize=10, borderpad=0.8)
+        fig.tight_layout(pad=1.5)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         return json.dumps({"status": "ok", "auc": roc_auc, "output": output_path})
@@ -1308,18 +1320,31 @@ def _generate_calibration_plot(y_true_path: str, y_prob_path: str, output_path: 
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        import seaborn as sns
         from sklearn.calibration import calibration_curve
 
         y_true = np.loadtxt(y_true_path)
         y_prob = np.loadtxt(y_prob_path)
         frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=10)
 
-        fig, ax = plt.subplots(figsize=(6, 5))
-        ax.plot(mean_pred, frac_pos, 'o-', lw=2)
-        ax.plot([0, 1], [0, 1], 'k--', lw=1, label='Perfect')
-        ax.set_xlabel('Predicted Probability')
-        ax.set_ylabel('Observed Proportion')
-        ax.legend()
+        sns.set_style("whitegrid")
+        sns.set_context("paper", font_scale=1.1)
+        fig, ax = plt.subplots(figsize=(7, 5.5))
+        ax.plot(mean_pred, frac_pos, 'o-', lw=2.5, color='#2166ac',
+                markersize=7, markerfacecolor='white', markeredgewidth=1.5,
+                markeredgecolor='#2166ac', label='Model')
+        ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.6, label='Perfect calibration')
+        ax.set_xlabel('Predicted Probability', fontsize=11)
+        ax.set_ylabel('Observed Proportion', fontsize=11)
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        ax.tick_params(labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#cccccc')
+            spine.set_linewidth(0.5)
+        ax.legend(loc='lower right', frameon=True, framealpha=0.9, edgecolor='#dddddd',
+                  fontsize=10, borderpad=0.8)
+        fig.tight_layout(pad=1.5)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         return json.dumps({"status": "ok", "output": output_path})
@@ -1334,17 +1359,36 @@ def _generate_shap_plot(features_json: str, output_path: str) -> str:
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        import seaborn as sns
+        import numpy as np
 
         data = _json.loads(features_json)  # [{"name": "feature", "importance": 0.15}, ...]
         names = [d["name"] for d in data]
         values = [d["importance"] for d in data]
 
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.barh(range(len(values)), values, color='steelblue', edgecolor='white')
-        ax.set_yticks(range(len(values)))
-        ax.set_yticklabels(names)
-        ax.set_xlabel('Mean |SHAP|')
-        fig.tight_layout()
+        sns.set_style("whitegrid")
+        sns.set_context("paper", font_scale=1.1)
+        # 按值升序排列 (最大值在顶部)
+        sorted_idx = np.argsort(values)
+        names_sorted = [names[i] for i in sorted_idx]
+        values_sorted = [values[i] for i in sorted_idx]
+
+        colors = sns.color_palette("Blues_d", n_colors=len(values_sorted))
+        fig, ax = plt.subplots(figsize=(8, max(5, len(names_sorted) * 0.35)))
+        ax.barh(range(len(values_sorted)), values_sorted, color=colors,
+                edgecolor='white', linewidth=0.5, height=0.7)
+        ax.set_yticks(range(len(values_sorted)))
+        ax.set_yticklabels(names_sorted, fontsize=10)
+        ax.set_xlabel('Mean |SHAP|', fontsize=11)
+        ax.tick_params(labelsize=10)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#cccccc')
+            spine.set_linewidth(0.5)
+        # 在条形末端显示数值标签
+        for i, (val, name) in enumerate(zip(values_sorted, names_sorted)):
+            ax.text(val + max(values_sorted) * 0.01, i, f'{val:.4f}',
+                    va='center', fontsize=8, color='#333333')
+        fig.tight_layout(pad=1.5)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         return json.dumps({"status": "ok", "output": output_path})

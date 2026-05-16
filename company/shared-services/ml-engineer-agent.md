@@ -578,6 +578,25 @@ dot.render('figures/Figure1_cohort-flow-diagram', format='tiff', dpi=300, cleanu
 
 data.json 的值必须从 cv_results.json 或 cohort_attrition.json **直接读取后写入**，不是从模型对象（`.feature_importances_`）重新提取。
 
+### Figure 美学规范 — 强制约束
+
+**所有 matplotlib/seaborn 生成的 Figure (Figure 2-4) 必须遵循以下规范，确保出版级质量：**
+
+1. **Seaborn 样式必须启用**: 每个绘图函数开头调用 `sns.set_style("whitegrid")` + `sns.set_context("paper", font_scale=1.1)`，禁止使用 matplotlib 裸默认样式
+2. **图例必须放在图内右下角**: `ax.legend(loc='lower right', frameon=True, framealpha=0.9, edgecolor='#dddddd')`，禁止使用默认 `legend()` 无参数调用。图例不得与数据线/数据点重叠，必要时用 `borderpad=0.8` 增加内边距
+3. **统一尺寸和分辨率**: `figsize=(7, 5.5)`, `dpi=300`, 保存时 `bbox_inches='tight'`
+4. **统一配色方案**: 主曲线颜色 `#2166ac`，参考线 `k--` + `alpha=0.6`，特征重要性用 `sns.color_palette("Blues_d")` 渐变
+5. **坐标轴美学**:
+   - 轴标签 `fontsize=11`，刻度 `fontsize=10`
+   - Spine 统一浅灰: `spine.set_edgecolor('#cccccc'); spine.set_linewidth(0.5)`
+   - ROC/校准图的 x/y 轴范围统一 `[-0.02, 1.02]`，留白避免线条贴边
+6. **数据点样式 (校准曲线)**: `markersize=7, markerfacecolor='white', markeredgewidth=1.5, markeredgecolor='#2166ac'`，确保空心圆不与图例框重叠
+7. **禁止的写法**:
+   - `ax.plot(..., 'b-')` — 禁止用单字符颜色码，必须用 hex 色值
+   - `ax.legend()` — 无参数调用
+   - `plt.savefig(..., dpi=100)` — 低分辨率
+   - 硬编码中文字体 — 论文图统一英文标签
+
 ### Phase 3 cohort_attrition.json 产出
 
 在 Phase 3 的数据预处理/模型训练脚本中，**在数据清洗完成后立即输出 `cohort_attrition.json`**。记录每个筛选步骤的排除数和剩余数。这是数据工程师和 ML 工程师的**强制交付件**。

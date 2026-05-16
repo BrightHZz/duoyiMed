@@ -113,14 +113,134 @@ def main():
     cv_results = load_cv_results(project_dir)
 
     # === 以下为 ml-engineer 扩展区域 ===
-    # 示例: 生成 ROC 曲线、校准图、特征重要性图
-    # 参考本模板中的 get_auc(), get_feature_importance() 等辅助函数
+    # 生成 ROC / 校准曲线 / 特征重要性图
     # 输出文件必须使用 Figure[N]_ 前缀命名
     # ====================================
 
     print(f"[generate_figures.py] project_dir={project_dir}")
     print(f"  best_model: {cv_results.get('best_model', '?')}")
-    # TODO: ml-engineer 在此处添加实际图表生成逻辑
+
+    # --- 美学基线: seaborn 样式 + 出版级参数 ---
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+
+    STYLE = {
+        "figsize": (7, 5.5),
+        "dpi": 300,
+        "color_main": "#2166ac",
+        "font_label": 11,
+        "font_tick": 10,
+        "spine_color": "#cccccc",
+        "spine_width": 0.5,
+    }
+
+    def apply_style(ax):
+        """统一应用出版级图表样式"""
+        sns.set_style("whitegrid")
+        sns.set_context("paper", font_scale=1.1)
+        ax.tick_params(labelsize=STYLE["font_tick"])
+        for spine in ax.spines.values():
+            spine.set_edgecolor(STYLE["spine_color"])
+            spine.set_linewidth(STYLE["spine_width"])
+
+    def add_legend(ax):
+        """图例统一放在右下角, 带边框和透明度"""
+        ax.legend(loc='lower right', frameon=True, framealpha=0.9,
+                  edgecolor='#dddddd', fontsize=10, borderpad=0.8)
+
+    figures_dir = ensure_output_dir(project_dir, "figures")
+    model_name = cv_results.get("best_model", list(cv_results.get("models", {}).keys())[0])
+
+    # ================================================================
+    # Figure 2: ROC Curve
+    # ================================================================
+    try:
+        from sklearn.metrics import roc_curve, auc
+        models = cv_results.get("models", {})
+        fig, ax = plt.subplots(figsize=STYLE["figsize"])
+        apply_style(ax)
+        for name, m in models.items():
+            fpr = np.array(m.get("roc_fpr", []))
+            tpr = np.array(m.get("roc_tpr", []))
+            roc_auc = m.get("auc", {}).get("mean", auc(fpr, tpr) if len(fpr) > 0 else 0)
+            if len(fpr) > 0:
+                ax.plot(fpr, tpr, lw=2.5, label=f'{name} (AUC = {roc_auc:.3f})')
+                ax.fill_between(fpr, tpr, alpha=0.05)
+        ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.6, label='Random')
+        ax.set_xlabel('1 − Specificity (FPR)', fontsize=STYLE["font_label"])
+        ax.set_ylabel('Sensitivity (TPR)', fontsize=STYLE["font_label"])
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        add_legend(ax)
+        fig.tight_layout(pad=1.5)
+        roc_path = figures_dir / "Figure2_roc-curve.png"
+        fig.savefig(roc_path, dpi=STYLE["dpi"], bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ {roc_path}")
+    except Exception as e:
+        print(f"  ✗ Figure 2 失败: {e}")
+
+    # ================================================================
+    # Figure 3: Calibration Plot
+    # ================================================================
+    try:
+        from sklearn.calibration import calibration_curve
+        fig, ax = plt.subplots(figsize=STYLE["figsize"])
+        apply_style(ax)
+        for name, m in models.items():
+            y_true = np.array(m.get("calib_y_true", []))
+            y_prob = np.array(m.get("calib_y_prob", []))
+            if len(y_true) > 0 and len(y_prob) > 0:
+                frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=10)
+                ax.plot(mean_pred, frac_pos, 'o-', lw=2.5, color=STYLE["color_main"],
+                        markersize=7, markerfacecolor='white', markeredgewidth=1.5,
+                        markeredgecolor=STYLE["color_main"], label=name)
+        ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.6, label='Perfect calibration')
+        ax.set_xlabel('Predicted Probability', fontsize=STYLE["font_label"])
+        ax.set_ylabel('Observed Proportion', fontsize=STYLE["font_label"])
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        add_legend(ax)
+        fig.tight_layout(pad=1.5)
+        cal_path = figures_dir / "Figure3_calibration-plot.png"
+        fig.savefig(cal_path, dpi=STYLE["dpi"], bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ {cal_path}")
+    except Exception as e:
+        print(f"  ✗ Figure 3 失败: {e}")
+
+    # ================================================================
+    # Figure 4: Feature Importance (SHAP)
+    # ================================================================
+    try:
+        fi = get_feature_importance(cv_results, model_name)
+        names = list(fi.keys())
+        values = list(fi.values())
+        sorted_idx = np.argsort(values)
+        names_sorted = [names[i] for i in sorted_idx]
+        values_sorted = [values[i] for i in sorted_idx]
+
+        colors = sns.color_palette("Blues_d", n_colors=len(values_sorted))
+        fig, ax = plt.subplots(figsize=(8, max(5, len(names_sorted) * 0.35)))
+        apply_style(ax)
+        ax.barh(range(len(values_sorted)), values_sorted, color=colors,
+                edgecolor='white', linewidth=0.5, height=0.7)
+        ax.set_yticks(range(len(values_sorted)))
+        ax.set_yticklabels(names_sorted, fontsize=10)
+        ax.set_xlabel('Mean |SHAP|', fontsize=STYLE["font_label"])
+        for i, (val, name) in enumerate(zip(values_sorted, names_sorted)):
+            ax.text(val + max(values_sorted) * 0.01, i, f'{val:.4f}',
+                    va='center', fontsize=8, color='#333333')
+        fig.tight_layout(pad=1.5)
+        shap_path = figures_dir / "Figure4_feature-importance.png"
+        fig.savefig(shap_path, dpi=STYLE["dpi"], bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ {shap_path}")
+    except Exception as e:
+        print(f"  ✗ Figure 4 失败: {e}")
 
     # ====================================
     print("[generate_figures.py] 完成。")
