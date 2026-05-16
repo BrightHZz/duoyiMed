@@ -1308,7 +1308,14 @@ def _generate_roc_curve(y_true_path: str, y_prob_path: str, output_path: str) ->
         fig.tight_layout(pad=1.5)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
-        return json.dumps({"status": "ok", "auc": roc_auc, "output": output_path})
+
+        # 生成图注文件 (图中不含注释描述)
+        out_stem = str(Path(output_path).with_suffix(''))
+        caption_file = f"{out_stem}_caption.md"
+        with open(caption_file, 'w') as f:
+            f.write(f"**Figure 2 | ROC Curve.**\n\n"
+                    f"Receiver operating characteristic curve. AUC = {roc_auc:.3f}.")
+        return json.dumps({"status": "ok", "auc": roc_auc, "output": output_path, "caption": caption_file})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -1347,7 +1354,15 @@ def _generate_calibration_plot(y_true_path: str, y_prob_path: str, output_path: 
         fig.tight_layout(pad=1.5)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
-        return json.dumps({"status": "ok", "output": output_path})
+
+        # 生成图注文件
+        out_stem = str(Path(output_path).with_suffix(''))
+        caption_file = f"{out_stem}_caption.md"
+        with open(caption_file, 'w') as f:
+            f.write("**Figure 3 | Calibration Plot.**\n\n"
+                    "Predicted probability vs. observed proportion. "
+                    "Points close to the diagonal indicate good calibration.\n")
+        return json.dumps({"status": "ok", "output": output_path, "caption": caption_file})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -1384,14 +1399,20 @@ def _generate_shap_plot(features_json: str, output_path: str) -> str:
         for spine in ax.spines.values():
             spine.set_edgecolor('#cccccc')
             spine.set_linewidth(0.5)
-        # 在条形末端显示数值标签
-        for i, (val, name) in enumerate(zip(values_sorted, names_sorted)):
-            ax.text(val + max(values_sorted) * 0.01, i, f'{val:.4f}',
-                    va='center', fontsize=8, color='#333333')
         fig.tight_layout(pad=1.5)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
-        return json.dumps({"status": "ok", "output": output_path})
+
+        # 生成图注文件 (特征重要性值写入图注，不在图中标注)
+        out_stem = str(Path(output_path).with_suffix(''))
+        caption_file = f"{out_stem}_caption.md"
+        lines = ["**Figure 4 | Feature Importance (SHAP).**\n",
+                 "Mean absolute SHAP values for top features:\n"]
+        for i, (val, name) in enumerate(zip(reversed(values_sorted), reversed(names_sorted))):
+            lines.append(f"- {name}: {val:.4f}\n")
+        with open(caption_file, 'w') as f:
+            f.writelines(lines)
+        return json.dumps({"status": "ok", "output": output_path, "caption": caption_file})
     except Exception as e:
         return json.dumps({"error": str(e)})
 

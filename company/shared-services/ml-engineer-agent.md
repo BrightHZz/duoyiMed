@@ -578,6 +578,15 @@ dot.render('figures/Figure1_cohort-flow-diagram', format='tiff', dpi=300, cleanu
 
 data.json 的值必须从 cv_results.json 或 cohort_attrition.json **直接读取后写入**，不是从模型对象（`.feature_importances_`）重新提取。
 
+### Figure caption — 必须独立为 .md 文件
+
+**图中禁止出现文字注释描述。** 所有统计量、数值、图例说明必须写入独立的 `Figure[N]_caption.md` 文件，不在图中标注。具体规则:
+
+- ROC 曲线: 图内仅保留图例 (AUC 值可放图例)，完整 caption 写入 `Figure2_roc-curve_caption.md`
+- 校准曲线: 图内无文字注释，caption 写入 `Figure3_calibration-plot_caption.md`
+- SHAP 特征重要性: **禁止在条形末端标注数值** (禁止 `ax.text()`)，完整特征名和 SHAP 值写入 `Figure4_feature-importance_caption.md`
+- 每个 caption.md 文件必须与对应 .png 文件同目录、同前缀命名
+
 ### Figure 美学规范 — 强制约束
 
 **所有 matplotlib/seaborn 生成的 Figure (Figure 2-4) 必须遵循以下规范，确保出版级质量：**

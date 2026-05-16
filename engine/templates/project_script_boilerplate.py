@@ -179,7 +179,14 @@ def main():
         roc_path = figures_dir / "Figure2_roc-curve.png"
         fig.savefig(roc_path, dpi=STYLE["dpi"], bbox_inches='tight')
         plt.close()
-        print(f"  ✓ {roc_path}")
+        # 图注文档 (图中不含注释描述)
+        caption_path = figures_dir / "Figure2_roc-curve_caption.md"
+        best_auc = cv_results.get("models", {}).get(model_name, {}).get("auc", {}).get("mean", 0)
+        caption_path.write_text(
+            f"**Figure 2 | ROC Curve.**\n\n"
+            f"Receiver operating characteristic curve. AUC = {best_auc:.3f}.\n"
+        )
+        print(f"  ✓ {roc_path} + caption")
     except Exception as e:
         print(f"  ✗ Figure 2 失败: {e}")
 
@@ -208,7 +215,14 @@ def main():
         cal_path = figures_dir / "Figure3_calibration-plot.png"
         fig.savefig(cal_path, dpi=STYLE["dpi"], bbox_inches='tight')
         plt.close()
-        print(f"  ✓ {cal_path}")
+        # 图注文档
+        cap_path = figures_dir / "Figure3_calibration-plot_caption.md"
+        cap_path.write_text(
+            "**Figure 3 | Calibration Plot.**\n\n"
+            "Predicted probability vs. observed proportion. "
+            "Points close to the diagonal indicate good calibration.\n"
+        )
+        print(f"  ✓ {cal_path} + caption")
     except Exception as e:
         print(f"  ✗ Figure 3 失败: {e}")
 
@@ -231,14 +245,18 @@ def main():
         ax.set_yticks(range(len(values_sorted)))
         ax.set_yticklabels(names_sorted, fontsize=10)
         ax.set_xlabel('Mean |SHAP|', fontsize=STYLE["font_label"])
-        for i, (val, name) in enumerate(zip(values_sorted, names_sorted)):
-            ax.text(val + max(values_sorted) * 0.01, i, f'{val:.4f}',
-                    va='center', fontsize=8, color='#333333')
         fig.tight_layout(pad=1.5)
         shap_path = figures_dir / "Figure4_feature-importance.png"
         fig.savefig(shap_path, dpi=STYLE["dpi"], bbox_inches='tight')
         plt.close()
-        print(f"  ✓ {shap_path}")
+        # 图注文档 (特征重要性值写入图注，不在图中标注)
+        cap_path = figures_dir / "Figure4_feature-importance_caption.md"
+        lines = ["**Figure 4 | Feature Importance (SHAP).**\n",
+                 "Mean absolute SHAP values for top features:\n"]
+        for name, val in zip(reversed(names_sorted), reversed(values_sorted)):
+            lines.append(f"- {name}: {val:.4f}\n")
+        cap_path.write_text("".join(lines))
+        print(f"  ✓ {shap_path} + caption")
     except Exception as e:
         print(f"  ✗ Figure 4 失败: {e}")
 
