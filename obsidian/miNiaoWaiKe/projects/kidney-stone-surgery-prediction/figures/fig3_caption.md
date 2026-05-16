@@ -1,0 +1,1 @@
+**Figure 3.** Calibration curve for the Random Forest model in the MIMIC-IV development cohort. The dashed diagonal line represents perfect calibration. The model shows slight overestimation of predicted risk in the upper probability range (>0.3). Brier score: 0.077.

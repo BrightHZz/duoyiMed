@@ -1,0 +1,3 @@
+## Figure 2. Feature importance — SHAP analysis.
+
+Mean absolute SHAP values for the 14 features in the PSA-inclusive XGBoost model, averaged across 5-fold cross-validation. Features are ranked by mean |SHAP| value. Acute physiological markers (lactate, albumin, hemoglobin, platelets, WBC, creatinine) are shown in red and account for 49.1% of total importance. Demographic and admission-related features account for 43.4%, and cancer-specific features (PSA, bone metastasis) account for 7.5%. The top five features were emergency admission (22.2%), lactate (15.1%), albumin (13.6%), hemoglobin (6.5%), and platelet count (5.5%). Lactate and albumin had missing rates of 76.0% and 67.8% respectively; their SHAP rankings should be interpreted with caution.

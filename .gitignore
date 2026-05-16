@@ -19,8 +19,8 @@ build/
 .claude/
 
 # Runtime outputs
-outputs/
-projects/
+/outputs/
+/projects/
 
 # Temp
 *.tmp

@@ -1,0 +1,1 @@
+**Figure 4.** SHAP (SHapley Additive exPlanations) summary plot of the 20 most important features by mean absolute SHAP value in the Random Forest model. Features are ranked by overall importance; each point represents an individual prediction, with color indicating feature value (red = high, blue = low).

@@ -1,0 +1,1 @@
+**Figure 2.** Receiver operating characteristic (ROC) curves for Random Forest (AUROC 0.755), XGBoost (AUROC 0.733), and Logistic Regression (AUROC 0.714) models, evaluated via 5-fold stratified cross-validation in the MIMIC-IV development cohort. The dashed diagonal line represents chance-level discrimination (AUROC 0.50).

@@ -1,0 +1,110 @@
+{
+  "project": "prostate-cancer-prognosis",
+  "phase": "execution",
+  "timestamp": "2026-05-11T11:01:35.107719",
+  "n_patients": 1521,
+  "n_features": 14,
+  "features": [
+    "age",
+    "psa_log",
+    "bone_metastasis",
+    "is_emergency",
+    "cci_total",
+    "hb",
+    "wbc",
+    "plt",
+    "creatinine",
+    "albumin",
+    "lactate",
+    "race_code",
+    "insurance_code",
+    "prostatectomy"
+  ],
+  "outcome": "30d_death_or_icu",
+  "outcome_rate": 0.14464168310322156,
+  "cv_results": {
+    "mean_auc": 0.8685490180317765,
+    "std_auc": 0.03133013838489619,
+    "mean_auc_lr": 0.8183790826032205,
+    "mean_prauc": 0.5542929425426651,
+    "mean_brier": 0.10538430009479652,
+    "pooled_auc": 0.8675005240723919,
+    "pooled_prauc": 0.5429434475132372,
+    "pooled_brier": 0.10538186123923553,
+    "calibration_slope": 0.7686347659844985,
+    "calibration_intercept": -0.9663933249946748
+  },
+  "folds": [
+    {
+      "fold": 1,
+      "auc_xgb": 0.8635492859630791,
+      "auc_lr": 0.8344653430860327,
+      "prauc_xgb": 0.54721234054815,
+      "brier_xgb": 0.10167482436623418,
+      "accuracy_xgb": 0.8524590163934426,
+      "n_train": 1216,
+      "n_val": 305,
+      "n_pos_val": 44
+    },
+    {
+      "fold": 2,
+      "auc_xgb": 0.8967657342657342,
+      "auc_lr": 0.8269230769230769,
+      "prauc_xgb": 0.609390922232692,
+      "brier_xgb": 0.09921220714147652,
+      "accuracy_xgb": 0.8651315789473685,
+      "n_train": 1217,
+      "n_val": 304,
+      "n_pos_val": 44
+    },
+    {
+      "fold": 3,
+      "auc_xgb": 0.8291958041958042,
+      "auc_lr": 0.7818181818181817,
+      "prauc_xgb": 0.4355412855025392,
+      "brier_xgb": 0.1169602667571477,
+      "accuracy_xgb": 0.8388157894736842,
+      "n_train": 1217,
+      "n_val": 304,
+      "n_pos_val": 44
+    },
+    {
+      "fold": 4,
+      "auc_xgb": 0.8499125874125874,
+      "auc_lr": 0.8302447552447552,
+      "prauc_xgb": 0.4883249600897538,
+      "brier_xgb": 0.11890795634867686,
+      "accuracy_xgb": 0.819078947368421,
+      "n_train": 1217,
+      "n_val": 304,
+      "n_pos_val": 44
+    },
+    {
+      "fold": 5,
+      "auc_xgb": 0.9033216783216783,
+      "auc_lr": 0.818444055944056,
+      "prauc_xgb": 0.6909952043401906,
+      "brier_xgb": 0.09016624586044726,
+      "accuracy_xgb": 0.8717105263157895,
+      "n_train": 1217,
+      "n_val": 304,
+      "n_pos_val": 44
+    }
+  ],
+  "feature_importance": {
+    "is_emergency": 0.2224595127800623,
+    "lactate": 0.15133307659974063,
+    "albumin": 0.13605024174976751,
+    "hb": 0.06497120541747443,
+    "plt": 0.05463663783811322,
+    "insurance_code": 0.04879357224175492,
+    "wbc": 0.047094420422022054,
+    "prostatectomy": 0.04412014049419562,
+    "cci_total": 0.04227225944163432,
+    "psa_log": 0.041153086884387846,
+    "age": 0.03840024863958007,
+    "race_code": 0.037143330495265664,
+    "creatinine": 0.03710258029032571,
+    "bone_metastasis": 0.034469686705675684
+  }
+}

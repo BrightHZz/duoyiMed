@@ -1,0 +1,236 @@
+{
+  "main": {
+    "id": "bc7ef5503311143b",
+    "type": "split",
+    "children": [
+      {
+        "id": "7fe6f0058d4185ad",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "55f7969a3f2962bf",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "projects/multimorbidity-pattern-2026/manuscript.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "manuscript"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "2df1e62f9ab7fd6c",
+    "type": "split",
+    "children": [
+      {
+        "id": "8181fa59f875e65d",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "304dfc2b020046b0",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "文件列表"
+            }
+          },
+          {
+            "id": "753f8dc42ef65181",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "搜索"
+            }
+          },
+          {
+            "id": "0d1ac8d4822c0f30",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "书签"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "9015d06cccac777b",
+    "type": "split",
+    "children": [
+      {
+        "id": "c8e1c92b95cb32b0",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "13fa61e4e647d0a2",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "data-sources/uk-biobank.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "uk-biobank 的反向链接列表"
+            }
+          },
+          {
+            "id": "dfa3bd006136f82c",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "data-sources/uk-biobank.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "uk-biobank 的出链列表"
+            }
+          },
+          {
+            "id": "eef4d815b88c2c4a",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "标签"
+            }
+          },
+          {
+            "id": "2e916354ac29bb5a",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "添加笔记属性"
+            }
+          },
+          {
+            "id": "c5722d0260823d91",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "data-sources/uk-biobank.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "uk-biobank 的大纲"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:打开快速切换": false,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": false,
+      "templates:插入模板": false,
+      "command-palette:打开命令面板": false,
+      "bases:新建数据库": false,
+      "obsidian-translator:Translate": false
+    }
+  },
+  "active": "304dfc2b020046b0",
+  "lastOpenFiles": [
+    "datasets/uk-biobank.md",
+    "datasets/mimic-iv.md",
+    "datasets/mimic-iii.md",
+    "datasets/clhls.md",
+    "datasets/charls.md",
+    "datasets/charls-variable-map.md",
+    "datasets/charls-ses-variables.md",
+    "datasets",
+    "projects/multimorbidity-pattern-2026/submission/manuscript.pdf",
+    "projects/multimorbidity-pattern-2026/submission",
+    "reference/author-info.md",
+    "concepts/sarcopenia.md",
+    "concepts/frailty.md",
+    "concepts/epigenetic-clocks.md",
+    "projects/ses-bioaging-2026/sections/02_methods.md",
+    "projects/ses-bioaging-2026/longitudinal_analysis.py",
+    "data-sources/uk-biobank.md",
+    "projects/ses-bioaging-2026/checklists/doi-verification.md",
+    "projects/ses-bioaging-2026/checklists",
+    "projects/ses-bioaging-2026/writer-self-review.md",
+    "projects/ses-bioaging-2026/clinical-review.md",
+    "projects/ses-bioaging-2026/biostat-review.md",
+    "projects/ses-bioaging-2026/validate_manuscript.py",
+    "projects/ses-bioaging-2026/recompute_results.py",
+    "data-sources/clhls.md",
+    "_dashboard.md",
+    "templates/t-project-brief.md",
+    "templates/t-literature-note.md",
+    "templates/t-experiment-log.md",
+    "methods/omop-cdm-mapping.md",
+    "methods/model-selection-guide.md",
+    "methods/causal-inference-choices.md",
+    "literature/literature-dashboard.md",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/图表.zip",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/归档.zip",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/Figure1_flow_diagram.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/FigureS2_decision_curve.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/FigureS1_missing_data.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/Figure4_shap_summary.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/Figure3b_domain_contribution.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/Figure3a_feature_importance.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures/Figure2_roc_curves.png",
+    "projects/prostate-cancer-2026/submissions/v1_bmc-geriatrics/figures",
+    "projects/prostate-cancer-2026/figures/feature_importance_fast.png",
+    "projects/prostate-cancer-2026/figures/roc_curves_fast.png",
+    "projects/prostate-cancer-2026/figures/model_comparison_optimized.png"
+  ]
+}

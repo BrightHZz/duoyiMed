@@ -1,0 +1,1 @@
+**Figure 1.** Flow diagram of cohort selection. The MIMIC-IV development cohort comprised 1,979 adult ED kidney stone patients after applying exclusion criteria. The MIMIC-III external validation cohort included 245 patients meeting comparable inclusion criteria.
