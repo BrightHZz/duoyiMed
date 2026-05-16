@@ -266,3 +266,96 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ================================================================
+# generate_tables.py 模板 (research-assistant 扩展)
+# ================================================================
+# 以下为 generate_tables.py 的标准骨架。关键约束:
+#   1. 顶部必须 import round_half_up (禁止使用 Python 内置 round)
+#   2. 所有数值通过 round_half_up() 舍入
+#   3. 同时产出 .md (人类可读) 和 .csv (Gate 可解析)
+#   4. 从 cv_results.json 读取数据, 禁止从模型对象重新提取
+#
+# 用法:
+#     python generate_tables.py --project-dir /path/to/project
+#
+# import csv
+# import json
+# import argparse
+# from pathlib import Path
+# from engine.utils.rounding import round_half_up, format_value, PRECISION
+#
+#
+# def load_cv_results(project_dir: Path) -> dict:
+#     ...  # 同 generate_figures.py 模板
+#
+#
+# def ensure_output_dir(project_dir: Path, subdir: str) -> Path:
+#     ...  # 同 generate_figures.py 模板
+#
+#
+# def write_md_table(path: Path, headers: list, rows: list):
+#     """写入 Markdown 表格。每一行的数值已按精度标准舍入。"""
+#     with open(path, 'w') as f:
+#         f.write('| ' + ' | '.join(headers) + ' |\n')
+#         f.write('|' + '|'.join(['---'] * len(headers)) + '|\n')
+#         for row in rows:
+#             f.write('| ' + ' | '.join(str(c) for c in row) + ' |\n')
+#
+#
+# def write_csv_table(path: Path, headers: list, rows: list):
+#     """写入 CSV 表格 (Gate 可解析格式)。"""
+#     with open(path, 'w', newline='') as f:
+#         writer = csv.writer(f)
+#         writer.writerow(headers)
+#         writer.writerows(rows)
+#
+#
+# def main():
+#     parser = argparse.ArgumentParser(description="项目表格生成脚本")
+#     parser.add_argument("--project-dir", type=Path, required=True)
+#     args = parser.parse_args()
+#
+#     project_dir = args.project_dir
+#     cv_results = load_cv_results(project_dir)
+#     tables_dir = ensure_output_dir(project_dir, "tables")
+#     models = cv_results.get("models", {})
+#
+#     # ================================================================
+#     # Table 2: 模型性能对比 — 所有数值必须用 round_half_up()
+#     # ================================================================
+#     headers = ["Model", "AUC (95% CI)", "PR-AUC", "Brier",
+#                "Calib Slope", "Sensitivity", "Specificity", "F1"]
+#     rows = []
+#     for name, m in models.items():
+#         auc = m.get("auc", {})
+#         auc_str = (
+#             f"{format_value(auc.get('mean', 0), 3)} "
+#             f"({format_value(auc.get('ci_low', 0), 3)}–"
+#             f"{format_value(auc.get('ci_high', 0), 3)})"
+#         )
+#         row = [
+#             name,
+#             auc_str,
+#             format_value(m.get("pr_auc", {}).get("mean", 0), 3),
+#             format_value(m.get("brier", 0), 3),
+#             format_value(m.get("calibration_slope", 0), 2),
+#             format_value(m.get("sensitivity", 0), 3),
+#             format_value(m.get("specificity", 0), 3),
+#             format_value(m.get("f1", 0), 3),
+#         ]
+#         rows.append(row)
+#
+#     md_path = tables_dir / "table2_model_performance.md"
+#     csv_path = tables_dir / "table2_model_performance.csv"
+#     write_md_table(md_path, headers, rows)
+#     write_csv_table(csv_path, headers, rows)
+#     print(f"  ✓ {md_path}")
+#     print(f"  ✓ {csv_path}")
+#
+#     print("[generate_tables.py] 完成。")
+#
+#
+# if __name__ == "__main__":
+#     main()

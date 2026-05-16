@@ -2651,6 +2651,75 @@ def check_table2_content_completeness(outputs: dict, orch) -> tuple:
     )
 
 
+def check_table_rounding_import(outputs: dict, orch) -> tuple:
+    """generate_tables.py 必须 import round_half_up, 禁止裸用 round()
+
+    钱学森总体设计部: 数值溯源准确性。IEEE 754 导致 round(0.7595, 3) → 0.759,
+    必须使用 Decimal + ROUND_HALF_UP。Gate 6 扫描脚本源码验证 import 合规。
+
+    检查项:
+    1. 必须包含 from engine.utils.rounding import ... (至少含 round_half_up)
+    2. 不得包含裸 round( 调用 (Python 内置 round 的标志)
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = None
+    if hasattr(orch, 'kb') and orch.kb:
+        for _, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            candidate = Path(vault_path) / 'projects' / project_id
+            if candidate.exists():
+                proj_dir = candidate
+                break
+
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 查找 generate_tables.py
+    gen_tbl_paths = list(proj_dir.glob('generate_tables.py')) + \
+                    list(proj_dir.glob('scripts/generate_tables.py')) + \
+                    list(proj_dir.glob('tables/generate_tables.py'))
+
+    if not gen_tbl_paths:
+        return True, "跳过 (未找到 generate_tables.py)"
+
+    script_path = gen_tbl_paths[0]
+    try:
+        code = script_path.read_text()
+    except Exception:
+        return True, f"跳过 (无法读取 {script_path})"
+
+    has_round_half_up = bool(re.search(r'from\s+engine\.utils\.rounding\s+import', code))
+    has_naked_round = bool(re.search(r'(?<!_)round\(', code))
+
+    violations = []
+    if not has_round_half_up:
+        violations.append(
+            "generate_tables.py 未导入 round_half_up: "
+            "缺少 'from engine.utils.rounding import round_half_up'"
+        )
+    if has_naked_round:
+        violations.append(
+            "generate_tables.py 使用了 Python 内置 round() 而非 round_half_up(): "
+            "round(0.7595, 3) → 0.759 (IEEE 754 误差), "
+            "round_half_up(0.7595, 3) → 0.760 (Decimal ROUND_HALF_UP)"
+        )
+
+    if violations:
+        return False, (
+            "Table 脚本舍入合规检查不通过:\n"
+            + "\n".join(f"  • {v}" for v in violations)
+            + "\n\n修复: 将 generate_tables.py 中的所有 round() 替换为 round_half_up(), "
+            + "并在文件顶部添加 from engine.utils.rounding import round_half_up"
+        )
+
+    return True, "generate_tables.py 舍入 import 合规 ✓"
+
+
 def check_baseline_compliance(outputs: dict, orch) -> tuple:
     """Figure 必须从 Phase 3 baseline 读取数据，禁止从模型对象重新提取"""
     import os
@@ -3600,6 +3669,7 @@ GATE_DEFINITIONS = {
             "sections_exist": check_sections_exist,
             "tables_exist": check_tables_exist,
             "table2_complete": check_table2_content_completeness,
+            "table_rounding": check_table_rounding_import,
             "figures_exist": check_figures_exist,
             "manuscript_assembled": check_manuscript_assembled,
             "abstract_word_count": check_abstract_word_count,
