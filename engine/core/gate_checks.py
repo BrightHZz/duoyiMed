@@ -483,15 +483,47 @@ def check_conclusion_heading_level(outputs: dict, orch) -> tuple:
 
 
 def check_doi_verification(outputs: dict, orch) -> tuple:
-    """DOI 验证通过 (fake DOI = 0)"""
+    """DOI 验证通过 (fake DOI = 0) + 验证覆盖完整性检查。
+
+    检测逻辑:
+    1. 验证报告必须存在
+    2. 验证报告中的 DOI 数量必须匹配正文/参考文献中的 DOI 数量 (防止替换后未重验证)
+    3. 无 fake DOI
+    """
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower():
             if "DOI Verification" not in output:
-                return False, "缺少 DOI 验证报告 (投稿前强制步骤)"
+                return False, "缺少 DOI 验证报告 (投稿前强制步骤, 参考文献替换后必须重新验证)"
+
+            # 🆕 验证覆盖完整性: 正文 DOI 数 vs 验证报告 DOI 数
+            # 移除验证报告部分, 统计正文/参考文献中的 DOI
+            body = re.sub(
+                r'\n?---\n## DOI Verification Report.*$', '',
+                output, flags=re.DOTALL
+            )
+            body_dois = set(re.findall(r'10\.\d{4,}/[^\s"\')\]]+', body))
+            # 从验证报告提取已验证的 DOI
+            report_section = output[output.find("## DOI Verification"):] if "## DOI Verification" in output else ""
+            verified_dois = set(re.findall(r'`(10\.\d{4,}/[^`]+)`', report_section))
+
+            # 清理尾部标点
+            body_dois = {re.sub(r'[.,;)\]"'']+$', '', d) for d in body_dois}
+            verified_dois = {d.rstrip('.') for d in verified_dois}
+
+            if body_dois and verified_dois:
+                # 正文中有 DOI 但验证报告未覆盖 → 参考文献可能已被替换但未重验证
+                uncovered = body_dois - verified_dois
+                if uncovered:
+                    return False, (
+                        f"DOI 验证报告不完整: {len(uncovered)} 个 DOI 未被验证覆盖 "
+                        f"(参考文献可能已被替换但未重新验证)。请重新执行 DOI 验证。\n"
+                        f"未覆盖: {', '.join(sorted(list(uncovered)[:3]))}..."
+                    )
+
             # 检查是否包含 fake DOI
             if re.search(r'❌.*FAKE|fake\s*doi', output, re.IGNORECASE):
                 return False, "存在 fake DOI, 须替换后重新验证"
-            return True, "DOI 验证通过 (fake=0)"
+            return True, f"DOI 验证通过 (fake=0, {len(verified_dois)} 个 DOI 已验证)"
     return True, "跳过 (无 scientific-writer 输出)"
 
 

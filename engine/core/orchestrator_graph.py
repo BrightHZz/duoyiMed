@@ -2969,7 +2969,8 @@ cv_results.json 结构必须为:
     def _call_agent(self, agent_id: str, task_input: str,
                     phase_id: str = "", project_id: str = "",
                     rework_of: str = "") -> str:
-        """调用 Agent LLM。数据已由 Prefetcher 注入上下文。scientific-writer 输出自动经 DOI 验证。
+        """调用 Agent LLM。数据已由 Prefetcher 注入上下文。
+        scientific-writer / research-assistant 输出自动经 DOI 验证。
         自动记录运行日志 (系统辨识数据源)。"""
         print(f"  → 调用 {agent_id}...")
         t0 = time.time()
@@ -3015,8 +3016,9 @@ cv_results.json 结构必须为:
             out_tokens = response.usage.get("output_tokens", 0)
             output_len = len(content)
 
-            # ⭐ scientific-writer 输出自动 DOI 验证 — 代码强制执行
-            if agent_id == "scientific-writer":
+            # ⭐ 参考文献类 Agent 输出自动 DOI 验证 — 代码强制执行, 不可跳过
+            _DOI_AGENTS = {"scientific-writer", "research-assistant"}
+            if any(a in agent_id for a in _DOI_AGENTS):
                 content = self._verify_dois_in_output(content)
                 output_len = len(content)
 
@@ -3097,8 +3099,18 @@ cv_results.json 结构必须为:
         )
 
     def _verify_dois_in_output(self, content: str) -> str:
-        """从 scientific-writer 输出中提取所有 DOI，自动验证并附加报告。这是投稿前强制步骤。"""
+        """从 Agent 输出中提取所有 DOI，自动验证并附加报告。这是投稿前强制步骤。
+
+        如果 content 中已有旧的 DOI Verification Report, 先 strip 再重新验证,
+        确保验证覆盖的是当前参考文献 (而非初版缓存)。
+        """
         import re, json
+
+        # 🆕 先移除旧的验证报告, 确保每次重新验证当前引用
+        content = re.sub(
+            r'\n?---\n## DOI Verification Report.*$', '',
+            content, flags=re.DOTALL
+        )
 
         dois = re.findall(r'doi[: ]*(10\.\d{4,}/[^\s"\']+)', content)
         # 清理尾部标点 (句号/逗号/分号/括号)
@@ -3128,6 +3140,27 @@ cv_results.json 结构必须为:
 
         print(f"  🔍 DOI 结果: {result['summary']}")
         return content + report
+
+    def _ensure_doi_verification(self, content: str, context: str = "") -> str:
+        """强制 DOI 重新验证 — 用于参考文献被替换/更新后的场景。
+
+        与 _verify_dois_in_output 的区别:
+        - 即使 content 中已含旧的验证报告, 也会 strip 后重新验证
+        - 如果 content 不含 DOI, 直接返回 (不追加空报告)
+        - context 参数用于日志标识调用来源 (如 "Phase 5 参考文献替换")
+
+        调用时机:
+        - 参考文献被 research-assistant 替换后
+        - 论文修订 (revision) 流程中
+        - Gate 6 前最后一次检查
+        """
+        import re
+        if not re.search(r'10\.\d{4,}/', content):
+            return content  # 无 DOI 则跳过
+
+        label = f" [{context}]" if context else ""
+        print(f"  🔍 强制 DOI 重验证{label}: 参考文献已变更, 重新验证全部引用...")
+        return self._verify_dois_in_output(content)
 
     def _is_pure_data_query(self, task_input: str) -> bool:
         keywords = ["缺失率", "变量可用", "数据评估", "变量报告", "数据质量", "文件列表", "fried phenotype"]
