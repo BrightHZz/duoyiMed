@@ -122,6 +122,39 @@ os.environ["NUMEXPR_NUM_THREADS"] = "2"
 - 如果预计峰值 > 安全阈值 → 减小 n_jobs 或分批运行
 - **训练中如果风扇狂转 + 系统无响应 → 你已触发 OOM，立即强制终止进程**
 
+#### 6. 🆕 禁止嵌套并行 — cross_val 与模型 n_jobs 互斥 (2026-05-17 新增)
+
+**教训**: 2026-05-17 renal colic 项目 Phase 3，模型内部 `n_jobs=2` + `cross_val_predict(n_jobs=2)` → 10 分钟无输出（后台 8 线程竞争 CPU）。修复为 `n_jobs=1` 后，200 棵树 RF + XGB + LGB + LR 全部完成仅 **8 秒**。
+
+**根因**: sklearn 的 `cross_val_predict`/`cross_val_score` 使用 joblib 并行化 CV folds。如果模型内部也有 `n_jobs > 1`，每个 worker 内模型线程与 worker 进程竞争 CPU → 上下文切换开销远超并行收益。
+
+**强制规则**:
+```
+cross_val_predict(n_jobs=N)  →  模型必须设置 n_jobs=1
+cross_val_score(n_jobs=N)    →  模型必须设置 n_jobs=1
+模型 n_jobs=N                →  cross_val 必须使用 n_jobs=1
+```
+
+**正确做法**:
+```python
+# ✅ 方案 A: 模型 n_jobs=1, cross_val 并行 (推荐小模型如 LR)
+model = LogisticRegression(n_jobs=1)
+scores = cross_val_score(model, X, y, cv=5, n_jobs=2)  # CV folds 并行
+
+# ✅ 方案 B: 模型 n_jobs=2, cross_val 串行 (推荐树模型, 内部并行效率高)
+model = XGBClassifier(n_jobs=2)
+scores = cross_val_score(model, X, y, cv=5, n_jobs=1)  # CV 串行, 模型内并行
+```
+
+**错误做法**:
+```python
+# ❌ 嵌套并行 → 8 线程抢 4 核心 → 比单线程还慢 10-50 倍
+model = XGBClassifier(n_jobs=2)
+scores = cross_val_predict(model, X, y, cv=5, n_jobs=2)  # 2×2 + OMP threads = 灾难
+```
+
+**选择指南**: 数据量大 (N > 10,000) → 方案 B (模型内并行); 模型多 (≥3 个模型) → 方案 A (CV 并行)。N < 5,000 时两种方案差异 < 20%, 直接设 `n_jobs=1` 最安全。
+
 #### 内存样板 (每个训练脚本顶部，所有 import 之前)
 
 ```python

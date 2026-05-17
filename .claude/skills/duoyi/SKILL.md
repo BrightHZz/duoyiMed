@@ -980,7 +980,25 @@ RANDOM_SEED = 42
 - 原因: 无监控 = 盲飞，三次 crash 中均不知道内存到底在哪个步骤爆炸
 - preflight_safety_scan: 包含 `import psutil` 和 `log_memory` 辅助函数 → WARN (非强制，但强烈建议)
 
-编排器在调度 ml-engineer 时，必须在任务上下文中注入此规范的全部九条规则（包括规则 6-9），不可遗漏。
+**规则 10 — 🆕 禁止嵌套并行: cross_val 与模型 n_jobs 互斥** (2026-05-17 新增, 起因: renal colic Phase 3 嵌套并行导致 10 分钟无输出, 修复后 8 秒完成)
+
+- **禁止**: `cross_val_predict(..., n_jobs=N)` + 模型内部 `n_jobs=N` (N > 1)。每个 CV worker 内模型线程与 worker 进程竞争 CPU → 上下文切换开销远超并行收益
+- **方案 A** (推荐小模型): 模型 `n_jobs=1` + `cross_val_score(..., n_jobs=2)` — CV folds 并行
+- **方案 B** (推荐树模型): 模型 `n_jobs=2` + `cross_val_score(..., n_jobs=1)` — 模型内部并行
+- **选择指南**: N > 10,000 → 方案 B; 多模型 (≥3) → 方案 A; N < 5,000 → `n_jobs=1` 最安全
+- 强制要求: preflight_safety_scan 检测到 `cross_val_` 调用且模型 `n_jobs > 1` 且 `cross_val n_jobs > 1` → FAIL
+
+```python
+# ✅ 正确
+model = XGBClassifier(n_jobs=2)
+scores = cross_val_score(model, X, y, cv=5, n_jobs=1)  # 模型内并行, CV 串行
+
+# ❌ 灾难: 嵌套并行
+model = XGBClassifier(n_jobs=2)
+scores = cross_val_predict(model, X, y, cv=5, n_jobs=2)  # 8 线程抢 CPU
+```
+
+编排器在调度 ml-engineer 时，必须在任务上下文中注入此规范的全部十条规则（包括规则 6-10），不可遗漏。
 
 ---
 
