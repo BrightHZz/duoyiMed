@@ -1,0 +1,12 @@
+{
+  "project_id": "proj_1778997283_8738",
+  "generated_by": "shared/data-engineer",
+  "training_data": {
+    "source": "MIMIC-IV HOSP (DuckDB: D:/database/datasets/MIMIC/mimic.db)",
+    "n_patients": 1910,
+    "n_positive": 383,
+    "positive_rate": 0.2005,
+    "n_features": 19,
+    "is_synthetic": false
+  }
+}

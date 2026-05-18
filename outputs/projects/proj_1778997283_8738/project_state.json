@@ -1,0 +1,47 @@
+{
+  "project_id": "proj_1778997283_8738",
+  "division": "urology",
+  "user_request": "Machine Learning Prediction of Urological Intervention in Emergency Renal Colic: MIMIC Study with External Validation",
+  "status": "paused",
+  "paused_at": "2026-05-18T21:00:00",
+  "pause_reason": "缺少合适的验证集。MIMIC-III 与 MIMIC-IV 的特征可用性不匹配（种族/missing data pattern/population age差异），导致外部验证 AUC 0.606（内部 0.947，Δ=0.341）。MIMIC-III 为 ICU 数据库，与 MIMIC-IV 急诊肾绞痛人群存在系统性差异。需要找到与 MIMIC-IV ED 人群匹配的外部验证数据源（如 eICU-CRD 或其他 ED 数据库）。",
+  "pause_action_items": [
+    "检索 eICU-CRD 或其他急诊数据库的肾绞痛队列",
+    "确认外部数据源有匹配的特征集（至少8个核心实验室+人口学）",
+    "外部数据源确认后，用共同特征集重新训练+验证"
+  ],
+  "phases_to_run": [
+    "system_design", "problem_definition", "design",
+    "execution", "external_validation", "review", "writing", "clinical_tool"
+  ],
+  "current_phase_index": 4,
+  "completed_phases": ["system_design", "problem_definition", "design", "execution"],
+  "phase_outputs": {
+    "system_design": {"__sds__": "sds.md"},
+    "problem_definition": {"frame_assessment": "FRAME 56.5/80, PI CONDITIONAL GO"},
+    "design": {"sap": "SAP v1.0 — PI APPROVED"},
+    "execution": {
+      "cv_results": "LightGBM AUC 0.947 (real MIMIC-IV, 1910 patients, 24 features, SMOTE)",
+      "data_provenance": "data_provenance_report.json — is_synthetic=false",
+      "training": "tune_model.py — feature engineering + 50-round RandomizedSearchCV",
+      "gate_report": "gate_report_phase3.json — auc_threshold PASS (0.947)"
+    }
+  },
+  "gate_results": {
+    "system_design": {"status": "pass", "verified": true},
+    "problem_definition": {"status": "cond_pass", "verified": true},
+    "design": {"status": "pass", "verified": true},
+    "execution": {"status": "pass", "verified": true, "auc": 0.947, "data": "real MIMIC-IV HOSP"},
+    "external_validation": {
+      "status": "fail",
+      "verified": true,
+      "detail": "MIMIC-III external AUC 0.606, delta 0.341 > 0.15. Validation set incompatible.",
+      "mimic3_auc": 0.606,
+      "mimic3_delta": 0.341,
+      "reason": "MIMIC-III ICU population vs MIMIC-IV ED population. Feature mismatch (race/comorbidities/labs)."
+    }
+  },
+  "created_at": "2026-05-17T13:54:43.654489",
+  "updated_at": "2026-05-18T21:00:00",
+  "completed_at": null
+}
