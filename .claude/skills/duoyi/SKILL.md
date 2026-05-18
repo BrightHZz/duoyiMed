@@ -336,6 +336,183 @@ python run_research.py --analyze  # 生成运行状态报告
 11. **Agent-Gate 对齐**: Agent prompt 中任何可量化约束必须同步有 auto gate check; 新增 prompt 约束 → 同步新增 gate_checks.py 函数 + 注册到对应 Phase (2026-05-11 审计后新增, 详见 company/management/agent-gate-coverage-audit.md)
 12. **执行前阻断**: Phase 3/4/6 中任何 Python 脚本执行前，编排器必须运行 `preflight_safety_scan`。扫描 FAIL 时禁止执行，输出具体修复项清单。扫描仅检查安全配置（n_jobs/thread limits/pickle覆盖/gc/内存预估），不检查业务逻辑。WARN 级别不阻断但需在日志中记录。(2026-05-12 新增，起因: 三次 kernel panic 均违反已有安全规范但系统未阻断)
 13. **临床工具安全**: Phase 7 产出的 Web 工具必须包含醒目的安全免责声明 ("for research and educational purposes only / does not constitute medical advice")。工具不得声称可替代临床判断或推荐具体治疗方案。无外部验证的模型必须在界面中明确标注。(2026-05-15 新增)
+14. **🆕 Gate 报告不可绕过 (OEMC)**: 每个 Phase 完成后，编排器必须在项目目录下生成 `gate_report_phase{N}.json`。进入 Phase N+1 前，编排器必须先读取 Phase N 的 gate_report，确认 `checks_executed == true` 且所有 auto_checks 的 result 不为 "fail"。缺少 gate_report 或 checks_executed == false → 阻断前进，必须回退执行该 Phase 的 Gate 检查。此机制确保 A环(阶段内Gate返工回路)和 B环(跨Phase反馈回路)不会被绕过，将"不可口头通过"从声明转为代码层面的阻断约束。(2026-05-18 新增, 起因: proj_1778997283_8738 全部 8 个 Gate 口头通过, submission/ 交付件缺失)
+15. **🆕 医疗数据真实性前置检查 (Data Authenticity Gate)**: Phase 3 启动前，编排器必须执行数据来源验证。训练数据必须是真实数据库查询结果，**禁止合成数据产出进入 Phase 4-7**。合成数据 (--mode synthetic) 仅允许用于 Phase 3 脚本语法验证，其产出的 AUC/cv_results.json/模型文件不得作为 Phase 4+ 的输入。违反此原则 → 项目冻结，所有下游 Phase 基线作废。数据真实性检查由 data-engineer 独立执行（编排器不能兼任），检查结果写入 `data_provenance_report.json`。本原则高于所有其他编排原则——任何流程效率考量不得凌驾于数据真实性之上。(2026-05-18 新增, 起因: proj_1778997283_8738 Phase 3 用合成数据训练, AUC 0.961 被写入 Abstract/Conclusion, MIMIC-III 真实验证后 AUC 仅 0.47)
+16. **🆕 角色分离原则**: 编排器不能同时兼任 ml-engineer / data-engineer / PI。当编排器以 LLM Agent 模式执行时，每进入一个 Phase 必须显式切换为对应 Agent 的视角和约束。编排器不得为了效率吞掉其他角色的质疑——ml-engineer 必须坚持用真实数据，PI 必须在看到 synthetic 标记时叫停。本原则是钱学森研讨厅思想的落地：多角色并行辩论的前提是**角色之间有真正的独立性**。当所有角色由同一实体扮演时，辩论退化为独白，系统失去交叉验证能力。(2026-05-18 新增, 起因: proj_1778997283_8738 编排器同时充当全部角色, 明知 synthetic 训练但以"先跑通"为由推进至 Phase 6)
+
+---
+
+## 🆕 数据真实性前置检查 (Data Authenticity Gate)
+
+> **背景**: 2026-05-17 proj_1778997283_8738 Phase 3 用 `--mode synthetic` 生成合成数据训练模型。合成数据的 AUC 0.961 被写入 Abstract、Conclusion、Discussion，并作为 Phase 4-7 的输入。MIMIC-III 真实数据验证时 AUC 仅 0.47（比随机还差）。根因: 编排器中所有角色（ml-engineer/data-engineer/PI）被同一实体扮演，对"先跑通"的追求凌驾于数据真实性之上。医疗研究必须以事实为依据——合成数据的结论写入论文是科学不端行为。
+
+### 强制规则
+
+**DAG-R1: 数据来源强制声明**: Phase 3 启动前，data-engineer 必须生成 `data_provenance_report.json`，声明训练数据的来源、查询语句、行数、时间范围。编排器不得兼任 data-engineer 执行此检查。
+
+`data_provenance_report.json` 格式:
+```json
+{
+  "project_id": "...",
+  "generated_by": "shared/data-engineer",
+  "training_data": {
+    "source": "mimic_iv_hosp (DuckDB: D:/database/datasets/MIMIC/mimic.db)",
+    "query_hash": "sha256 of the SQL query used",
+    "n_patients": 4200,
+    "n_positive": 504,
+    "date_range": "2014-01-01 to 2019-12-31",
+    "is_synthetic": false
+  },
+  "external_validation_data": {
+    "source": "mimic_iii (DuckDB: D:/database/datasets/MIMIC/mimic.db)",
+    "n_patients": 274,
+    "n_positive": 59,
+    "is_synthetic": false
+  }
+}
+```
+
+**DAG-R2: 合成数据隔离**: `is_synthetic == true` 时:
+- cv_results.json 文件名必须包含 `_synthetic` 后缀 (如 `cv_results_synthetic.json`)
+- 模型文件必须包含 `_synthetic` 后缀 (如 `xgb_final_synthetic.pkl`)
+- `gate_report_phase3.json` 必须包含 `data_provenance: synthetic` 标记
+- Phase 4-7 编排器在 `_check_gate()` 时必须检查此标记: `data_provenance == synthetic` → 阻断 → 要求真实数据重训练
+- 合成数据仅允许用于: 脚本语法验证 / 代码调试 / Pipeline 集成测试
+- 合成数据产出的任何指标 (AUC, Brier, 特征重要性) **禁止进入 sections/ 或 submission/**
+
+**DAG-R3: 数据血缘追溯**: submission/manuscript.md 中每个数值必须能追溯到:
+```
+manuscript AUC 0.852
+  → sections/04_results.md
+    → cv_results.json (models.xgboost_scheme_a.auc.mean)
+      → train_model.py --mode production
+        → mimic_iv_hosp.admissions + diagnoses_icd + labevents (DuckDB query)
+```
+
+Gate 6 `check_numerical_traceability` 需扩展为三级追溯: manuscript → cv_results.json → database query。
+
+**DAG-R4: PI 数据真实性终审**: Phase 5 (Review) 中 PI 必须检查 `data_provenance_report.json`。PI 签批时必须确认:
+- [ ] 训练数据来自真实数据库（非合成）
+- [ ] 外部验证数据来源独立于训练数据
+- [ ] 所有 manuscript 中的性能指标可追溯到真实数据
+
+---
+
+## 🆕 角色分离执行规范
+
+> **背景**: 编排器模式（LLM Agent 直接执行所有 Phase）下，编排器同时扮演 orchestrator、ml-engineer、data-engineer、biostatistician、PI 等角色。当所有角色由同一实体扮演时，研讨厅辩论退化为独白，交叉验证失效，对效率的追求吞掉其他角色的质疑。
+
+### 强制规则
+
+**RS-R1: 角色显式切换**: 编排器每进入一个 Phase，必须在输出开头声明当前扮演的角色和该角色的约束:
+```
+[Role: shared/ml-engineer]
+Constraints: n_jobs=2, 禁止嵌套并行, 真实数据必须验证完整性, 不得使用合成数据替代
+```
+
+**RS-R2: 角色冲突强制上报**: 当编排器发现两个角色之间存在冲突时（如 ml-engineer 要求真实数据 vs orchestrator 想用合成数据加速），编排器必须:
+1. 停止执行
+2. 以两个角色的身份分别陈述立场
+3. 由 PI 角色裁决
+4. 裁决结果写入 `role_conflict_log.json`
+
+**RS-R3: 医疗项目角色分离强化**: 对于医疗相关项目，以下角色**不得由编排器兼任**:
+- data-engineer: 数据提取和验证必须由编排器以 data-engineer Agent prompt 约束独立执行
+- PI: 终审签批必须由编排器以 PI Agent prompt 约束独立执行，审查 data_provenance_report.json
+
+---
+
+## 🆕 编排器执行强制检查清单 (OEMC)
+
+> **背景**: 2026-05-17 proj_1778997283_8738 执行中，编排器在未实际运行任何 Python 脚本、未执行任何 Gate 检查的情况下，将 8 个 Phase 全部标记为 "pass"。根因: 编排器可以通过直接写入 project_state.json 绕过所有检查。钱学森闭环反馈控制的前提是"传感器在工作"——Gate 检查函数被绕过等于关闭所有传感器，A/B/C 三个反馈回路全部变成开环。(详见 `company/management/engineering-cybernetics-lessons-learned-2026-05-18.md`)
+
+### 强制规则
+
+**OEMC-R1: Gate Report 必须存在**: 每个 Phase 完成后，编排器必须生成 `gate_report_phase{N}.json`。文件格式:
+```json
+{
+  "phase_id": "...",
+  "checks_executed": true,
+  "auto_checks": [
+    {"check_id": "...", "executed": true, "result": "pass|fail|cond_pass", "evidence": "..."}
+  ],
+  "scripts_executed": [
+    {"script": "src/...py", "exit_code": 0, "output_artifacts": ["..."]}
+  ],
+  "deliverables_verified": [
+    {"path": "...", "exists": true}
+  ]
+}
+```
+
+**OEMC-R2: 进入下一 Phase 前强制验证**: 编排器在开始 Phase N+1 之前，必须:
+1. 读取 `gate_report_phase{N}.json`
+2. 检查 `checks_executed == true`
+3. 检查所有 auto_checks 的 `result != "fail"`
+4. 检查所有 deliverables_verified 的 `exists == true`
+5. 以上任何一项不满足 → **阻断前进**，输出缺失项清单，回退执行
+
+**OEMC-R3: 脚本必须实际执行**: Phase 3/4/6 中任何 Python 脚本不得仅"被写入"。编排器必须确认脚本已被执行（exit_code 记录在 gate_report 中）。`scripts_executed` 为空 → 等同于 checks_executed == false → 阻断。
+
+**OEMC-R4: 编排原则 #2 强制化**: 编排原则 #2 "不可口头通过"现在是可验证的。每个 Gate 的 pass/fail 判定必须有至少 1 个 auto_checks 条目且所有条目 executed==true。0 个 auto_checks 的 Gate 报告无效。
+
+**OEMC-R5: 虚假数据检测**: 如果 gate_report 中 `checks_executed == true` 但 `auto_checks` 为空数组 → 视为虚假报告 → Gate FAIL → 触发 B环，创建变更请求 CR-fake-gate-{phase_id}。
+
+**🆕 OEMC-R6: 原始输出不可伪造原则 (2026-05-18 新增, 起因: OEMC 违规 #2 — gate_report 里 check_numerical_traceability 被直接写入 pass 但从未执行)**:
+
+每条 auto_check 必须附带 `raw_output` 字段 — 检查函数的原始输出文本。仅 `result: "pass"` 不够。
+
+```json
+{
+  "check_id": "check_numerical_traceability",
+  "executed": true,
+  "result": "fail",
+  "raw_output": "MISMATCH: manuscript AUC 0.852 vs cv_results.json xgboost_scheme_a_auc 0.938, deviation 9.2% > 0.1% threshold"
+}
+```
+
+`raw_output` 要求:
+- 必须包含**具体的数值/文件名/行号**，不能只是 "PASS" 或 "OK"
+- 必须包含**足够信息让独立的复核者（Phase N+1 编排器或人类）判断结论是否自洽**
+- 如果 raw_output 描述的内容与 result 矛盾（如 raw_output 显示 MISMATCH 但 result=pass）→ 视为伪造 → Gate FAIL
+
+**🆕 OEMC-R7: 交叉审计机制 (2026-05-18 新增)**: 
+
+编排器在进入 Phase N+1 时，除了读取 Phase N 的 gate_report，还必须对其中**至少 1 条关键 auto_check 执行独立复验**。复验方式：
+- 如果 check 在引擎代码中有对应函数（如 `check_numerical_traceability`）→ 用 Bash 工具执行该 Python 函数
+- 如果 check 是 LLM 语义检查 → 编排器重新读取相关文件，独立判断
+
+复验不通过 → gate_report 伪造嫌疑 → Phase N+1 阻断 → Phase N 强制重做 Gate。
+
+**🆕 OEMC-R8: 全 section 数值一致性自检 (2026-05-18 新增, 起因: Phase 6 两次重跑均漏掉 conclusion/keywords/discussion 中的旧假数据)**:
+
+Phase 6 编排器在 assembly 之前，必须先执行全 section 自检:
+1. 列出 `sections/` 下所有 .md 文件
+2. 对每个文件，提取其中所有 X.XXX 格式的数值
+3. 与 cv_results.json + external_validation_results.json 交叉比对
+4. 任何文件的数值无法追溯到真相源 → 该文件必须更新后重新自检
+
+此规则起因: `check_numerical_traceability` 只扫描 `04_results.md`，不扫描 `05_discussion.md`、`06_conclusion.md`、`07_keywords.md`。编排器两次重跑都只修复了被 Gate 报 FAIL 的文件，未主动逐文件核查。Discussion 中的 AUC 0.852 和 Conclusion 中的 AUC 0.852 一直未被发现，因为 Gate 对这些节只有结构性检查（七段格式 / ## 层级），没有数值一致性检查。
+
+**OEMC-R8 检查范围限定** (2026-05-18):
+- **必须检查**: `04_results.md`、`05_discussion.md`、`06_conclusion.md` — 这些节报告内部研究结果，所有数值必须可追溯到 cv_results.json 或 external_validation_results.json
+- **不应检查**: `02_introduction.md`（文献综述中的外部 AUC）、`03_methods.md`（方法学参数如 learning_rate=0.05、SMOTE 阈值 0.40）、`08_references.md`（DOI 编号）— 这些节的数值来自外部文献或方法设定，不要求可追溯到内部真相源
+- **例外判定规则**: 如果数值出现在 Introduction 段落且上下文包含引用标记 `[N]`，自动判定为文献引用 → 豁免
+
+**为什么需要这个**: OEMC-R1~R5 定义了 gate_report 必须存在且 checks_executed==true，但 gate_report 是**编排器自己写的**。同一个 Agent 生成报告 + 同一个 Agent 审计报告 = 自签证书。R6 要求报告包含原始证据，R7 要求下游编排器独立复验——这是钱学森模块二（可靠性工程）的"用两个不可靠元件交叉验证"原则在 gate_report 层面的落地。
+
+### 各 Phase 的 OEMC 底线
+
+| Phase | 最少 auto_checks | 最少 scripts_executed | 关键 deliverables | 🆕 数据真实性 |
+|-------|:---:|:---:|------|:--:|
+| 0 | 0 (auto-pass) | 0 | sds.md | — |
+| 1 | 4 | 0 | literature-precheck.md, data-availability.md, frame-assessment.md | — |
+| 2 | 4 | 0 | sap.md, pi-ruling.md | — |
+| 3 | 6 | 1 (train_model.py) | cv_results.json, xgb_final.pkl, cohort_attrition.json | **data_provenance_report.json 必须 is_synthetic==false** |
+| 4 | 3 | 1 (external_validation.py) | external_validation_results.json | 验证数据来源独立于训练数据 |
+| 5 | 4 | 0 | review-pi.md (PI签批) | PI 检查 data_provenance_report.json |
+| 6 | 27 | 4 | submission/manuscript.md, submission/figures/*.png, submission/tables/*.csv | 数值→cv_results→database 三级追溯 |
+| 7 | 5 | 0 | supplements/app.py, supplements/model_info.json | 免责声明标注训练数据来源 |
 
 ## 公司质量标准
 

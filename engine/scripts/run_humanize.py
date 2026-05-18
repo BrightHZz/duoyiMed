@@ -144,7 +144,7 @@ UNIVERSAL_ABBR = {
 
 def scan_file(filepath: Path) -> list[dict]:
     """Scan a single markdown file and return violations."""
-    text = filepath.read_text()
+    text = filepath.read_text(encoding='utf-8')
     violations = []
     short_name = filepath.name
 
@@ -329,7 +329,7 @@ def run_humanize(project_dir: Path) -> dict:
     for fpath in md_files:
         name_lower = fpath.name.lower()
         if "reference" not in name_lower and "acknowledgment" not in name_lower:
-            full_text += fpath.read_text() + "\n"
+            full_text += fpath.read_text(encoding='utf-8') + "\n"
 
     abbr_issues = scan_abbreviations(full_text)
 

@@ -271,7 +271,7 @@ def check_all_models_evaluated_completely(outputs: dict, orch) -> tuple:
         return True, "跳过 (未找到 cv_results.json)"
 
     try:
-        cv_data = json.loads(cv_paths[0].read_text())
+        cv_data = json.loads(cv_paths[0].read_text(encoding='utf-8'))
     except (json.JSONDecodeError, OSError):
         return True, "跳过 (cv_results.json 无法解析)"
 
@@ -464,7 +464,7 @@ def check_manuscript_assembled(outputs: dict, orch) -> tuple:
             for manuscript_rel in ['submission/manuscript.md', 'sections/manuscript.md']:
                 manuscript_path = proj_dir / manuscript_rel
                 if manuscript_path.exists():
-                    content = manuscript_path.read_text()
+                    content = manuscript_path.read_text(encoding='utf-8')
                     has_imrad = all(s in content for s in ["## Introduction", "## Methods", "## Results", "## Discussion"])
                     if has_imrad:
                         return True, f"manuscript.md ({manuscript_rel}) 文件存在且结构完整"
@@ -559,7 +559,7 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
     if not refs_file.exists():
         return True, "跳过 (08_references.md 不存在)"
 
-    refs_text = refs_file.read_text()
+    refs_text = refs_file.read_text(encoding='utf-8')
 
     # 逐条解析引用: {ref_num, cited_title, doi}
     refs = []
@@ -711,7 +711,7 @@ def _load_classic_papers_registry() -> set:
         return registry
 
     try:
-        content = registry_path.read_text()
+        content = registry_path.read_text(encoding='utf-8')
         # 提取表格中的论文行: | Author et al., Journal YEAR | YEAR | reason |
         import re
         for line in content.split('\n'):
@@ -2011,7 +2011,7 @@ def check_method_implementation_fidelity(outputs: dict, orch) -> tuple:
     if not methods_files:
         return True, "跳过 (未找到 Methods 文件)"
 
-    methods_text = methods_files[0].read_text()
+    methods_text = methods_files[0].read_text(encoding='utf-8')
 
     # 提取方法声明关键词
     method_patterns = {
@@ -2049,7 +2049,7 @@ def check_method_implementation_fidelity(outputs: dict, orch) -> tuple:
     code_text = ""
     for cf in code_files:
         if cf.exists():
-            code_text += cf.read_text() + "\n"
+            code_text += cf.read_text(encoding='utf-8') + "\n"
 
     # 实现关键词映射
     impl_patterns = {
@@ -2129,7 +2129,7 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
         return False, "数值追踪失败: 未找到 cv_results.json (Phase 3 基线文件缺失，无法执行数值追踪。请返回 Phase 3 完成模型训练并产出 cv_results.json)"
 
     try:
-        cv_data = json.loads(cv_paths[0].read_text())
+        cv_data = json.loads(cv_paths[0].read_text(encoding='utf-8'))
     except (json.JSONDecodeError, OSError):
         return True, "跳过 (cv_results.json 无法解析)"
 
@@ -2174,7 +2174,7 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
 
     for fd in figure_data_files:
         try:
-            fig_data = json.loads(fd.read_text())
+            fig_data = json.loads(fd.read_text(encoding='utf-8'))
         except (json.JSONDecodeError, OSError):
             continue
         fig_flat = flatten_json(fig_data)
@@ -2199,7 +2199,7 @@ def check_numerical_traceability(outputs: dict, orch) -> tuple:
     table_files = list(proj_dir.glob('tables/*.md'))
     for tf in table_files:
         try:
-            table_text = tf.read_text()
+            table_text = tf.read_text(encoding='utf-8')
         except OSError:
             continue
         # 提取所有数值: X.XXX 或 XX.X%
@@ -2263,7 +2263,7 @@ def check_cohort_attrition_consistency(outputs: dict, orch) -> tuple:
         )
 
     try:
-        cohort = json.loads(cohort_paths[0].read_text())
+        cohort = json.loads(cohort_paths[0].read_text(encoding='utf-8'))
     except (json.JSONDecodeError, OSError):
         return False, "队列筛选一致性检查失败: outputs/cohort_attrition.json 无法解析"
 
@@ -2277,7 +2277,7 @@ def check_cohort_attrition_consistency(outputs: dict, orch) -> tuple:
         )
 
     try:
-        fig1 = json.loads(fig1_data_paths[0].read_text())
+        fig1 = json.loads(fig1_data_paths[0].read_text(encoding='utf-8'))
     except (json.JSONDecodeError, OSError):
         return False, f"队列筛选一致性检查失败: {fig1_data_paths[0].name} 无法解析"
 
@@ -2419,26 +2419,26 @@ def check_numerical_precision_consistency(outputs: dict, orch) -> tuple:
     manuscript = proj_dir / 'submission' / 'manuscript.md'
     if manuscript.exists():
         try:
-            text_sources['manuscript.md'] = manuscript.read_text()
+            text_sources['manuscript.md'] = manuscript.read_text(encoding='utf-8')
         except OSError:
             pass
 
     for tf in proj_dir.glob('tables/*.md'):
         try:
-            text_sources[f'tables/{tf.name}'] = tf.read_text()
+            text_sources[f'tables/{tf.name}'] = tf.read_text(encoding='utf-8')
         except OSError:
             pass
 
     for cf in proj_dir.glob('figures/*caption*.md'):
         try:
-            text_sources[f'figures/{cf.name}'] = cf.read_text()
+            text_sources[f'figures/{cf.name}'] = cf.read_text(encoding='utf-8')
         except OSError:
             pass
 
     # 也检查 submission 层
     for tf in proj_dir.glob('submission/tables/*.csv'):
         try:
-            text_sources[f'submission/{tf.name}'] = tf.read_text()
+            text_sources[f'submission/{tf.name}'] = tf.read_text(encoding='utf-8')
         except OSError:
             pass
 
@@ -2596,7 +2596,7 @@ def check_table2_content_completeness(outputs: dict, orch) -> tuple:
         return False, "Table 2 文件不存在 (tables/table2_model_performance.md)"
 
     try:
-        table2_text = table2_paths[0].read_text()
+        table2_text = table2_paths[0].read_text(encoding='utf-8')
     except OSError:
         return True, "跳过 (无法读取 Table 2)"
 
@@ -2642,7 +2642,7 @@ def check_table2_content_completeness(outputs: dict, orch) -> tuple:
                list(proj_dir.glob('outputs/cv_results.json'))
     if cv_paths:
         try:
-            cv_data = json.loads(cv_paths[0].read_text())
+            cv_data = json.loads(cv_paths[0].read_text(encoding='utf-8'))
             cv_models = _flatten_model_metrics(cv_data)
             if cv_models:
                 model_count_from_cv = len(cv_models)
@@ -2721,7 +2721,7 @@ def check_table_rounding_import(outputs: dict, orch) -> tuple:
 
     script_path = gen_tbl_paths[0]
     try:
-        code = script_path.read_text()
+        code = script_path.read_text(encoding='utf-8')
     except Exception:
         return True, f"跳过 (无法读取 {script_path})"
 
@@ -2782,7 +2782,7 @@ def check_baseline_compliance(outputs: dict, orch) -> tuple:
     if not gen_fig_paths:
         return True, "跳过 (未找到 generate_figures.py)"
 
-    gen_fig_code = gen_fig_paths[0].read_text()
+    gen_fig_code = gen_fig_paths[0].read_text(encoding='utf-8')
 
     violations = []
 
@@ -2904,7 +2904,7 @@ def check_submission_structure_integrity(outputs: dict, orch) -> tuple:
     # 5. manuscript.md 中不含 Classic 标注
     if manuscript.exists():
         try:
-            content = manuscript.read_text()
+            content = manuscript.read_text(encoding='utf-8')
             if '[Classic' in content or '[classic' in content.lower():
                 violations.append(
                     "submission/manuscript.md 中含 [Classic 标注 — "
@@ -3091,14 +3091,14 @@ def check_figure_text_citation(outputs: dict, orch) -> tuple:
     manuscript = proj_dir / 'submission' / 'manuscript.md'
     if manuscript.exists():
         try:
-            text_sources.append(manuscript.read_text())
+            text_sources.append(manuscript.read_text(encoding='utf-8'))
         except OSError:
             pass
 
     results_md = proj_dir / 'sections' / '05_results.md'
     if results_md.exists():
         try:
-            text_sources.append(results_md.read_text())
+            text_sources.append(results_md.read_text(encoding='utf-8'))
         except OSError:
             pass
 
@@ -3513,7 +3513,7 @@ def check_model_export_complete(outputs: dict, orch) -> tuple:
 
     # 验证 JSON 格式
     try:
-        mi = _json.loads(model_info.read_text())
+        mi = _json.loads(model_info.read_text(encoding='utf-8'))
         required_keys = ["features", "performance"]
         missing = [k for k in required_keys if k not in mi]
         if missing:
@@ -3522,7 +3522,7 @@ def check_model_export_complete(outputs: dict, orch) -> tuple:
         return False, f"model_info.json 格式错误: {e}"
 
     try:
-        fc = _json.loads(feature_config.read_text())
+        fc = _json.loads(feature_config.read_text(encoding='utf-8'))
         if not isinstance(fc, dict) or len(fc) == 0:
             return False, "feature_config.json 为空或无特征配置"
     except _json.JSONDecodeError as e:
@@ -3542,7 +3542,7 @@ def check_clinical_app_generated(outputs: dict, orch) -> tuple:
     if not app_file.exists():
         return False, "supplements/app.py 缺失 — Web 应用未生成"
 
-    content = app_file.read_text()
+    content = app_file.read_text(encoding='utf-8')
     required_elements = [
         ("streamlit", "import streamlit"),
         ("predict", "def predict"),
@@ -3565,7 +3565,7 @@ def check_clinical_disclaimer_present(outputs: dict, orch) -> tuple:
     if not app_file.exists():
         return True, "跳过 (app.py 不存在)"
 
-    content = app_file.read_text().lower()
+    content = app_file.read_text(encoding='utf-8').lower()
     checks = [
         ("for research", "for research"),
         ("educational purposes", "educational purposes"),
@@ -3606,14 +3606,14 @@ def check_deployment_config_complete(outputs: dict, orch) -> tuple:
         return False, f"部署配置文件缺失: {missing}"
 
     # 检查 requirements.txt 包含核心依赖
-    req_content = req_file.read_text().lower()
+    req_content = req_file.read_text(encoding='utf-8').lower()
     core_deps = ["streamlit", "numpy", "pandas"]
     missing_deps = [d for d in core_deps if d not in req_content]
     if missing_deps:
         return False, f"requirements.txt 缺少核心依赖: {missing_deps}"
 
     # 检查 Dockerfile 包含必要指令
-    docker_content = docker_file.read_text()
+    docker_content = docker_file.read_text(encoding='utf-8')
     if "FROM" not in docker_content or "RUN" not in docker_content:
         return False, "Dockerfile 格式不正确"
 

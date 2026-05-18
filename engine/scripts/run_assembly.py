@@ -76,7 +76,7 @@ def assemble(project_dir: Path) -> dict:
         manuscript_content = []
         for sf in section_files:
             try:
-                text = sf.read_text()
+                text = sf.read_text(encoding='utf-8')
                 # ⚠️ 否定约束 #5: strip [Classic ...] 标注
                 text = re.sub(r'\[Classic\s*[—–-]\s*[^\]]*\]', '', text)
                 text = re.sub(r'\[Foundational\s*[—–-]\s*[^\]]*\]', '', text)
@@ -87,7 +87,7 @@ def assemble(project_dir: Path) -> dict:
 
         if manuscript_content:
             manuscript_path = submission_dir / "manuscript.md"
-            manuscript_path.write_text("\n".join(manuscript_content))
+            manuscript_path.write_text("\n".join(manuscript_content), encoding='utf-8')
             written.append(str(manuscript_path))
 
     # ================================================================
@@ -183,7 +183,7 @@ def check_submission_structure_integrity(submission_dir: Path) -> list[str]:
     # 5. manuscript.md 中不含 Classic 标注
     if manuscript.exists():
         try:
-            content = manuscript.read_text()
+            content = manuscript.read_text(encoding='utf-8')
             if '[Classic' in content or '[classic' in content.lower():
                 errors.append(
                     "submission/manuscript.md 中含 [Classic 标注 — "

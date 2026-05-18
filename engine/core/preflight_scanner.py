@@ -85,7 +85,7 @@ class PreflightScanner:
         # 对每个脚本执行检查
         for script_path in scripts_to_scan:
             try:
-                code = script_path.read_text()
+                code = script_path.read_text(encoding='utf-8')
             except OSError as e:
                 failures.append(f"无法读取 {script_path.name}: {e}")
                 continue
