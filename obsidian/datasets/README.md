@@ -10,6 +10,10 @@
 | [[charls-variable-map\|CHARLS 变量映射]] | 变量名速查表 | 参考 | reference | 老年医学 |
 | [[charls-ses-variables\|CHARLS SES 变量]] | 社会经济变量映射 | 参考 | reference | 老年医学 |
 | [[clhls\|CLHLS]] | Chinese Longitudinal Healthy Longevity Survey | 社区队列 | available | 老年医学 |
+| [[clhls-2018-analysis\|CLHLS 2018 分析]] | CLHLS 2018 横截面完整分析报告 | 分析 | reference | 老年医学 |
+| [[clhls-wave-structure\|CLHLS Wave 结构]] | 8 Wave 纵向设计与合并策略 | 参考 | reference | 老年医学 |
+| [[clhls-codebook\|CLHLS Codebook]] | Codebook 文件与变量命名规则 | 参考 | reference | 老年医学 |
+| [[clhls-questionnaires\|CLHLS 问卷]] | 2018 存活/死亡问卷文档 | 参考 | reference | 老年医学 |
 | [[uk-biobank\|UK Biobank]] | UK Biobank | 生物银行 | external | 老年医学 |
 | [[mimic-iii\|MIMIC-III]] | Medical Information Mart for Intensive Care III | EHR | available | 泌尿外科 |
 | [[mimic-iv\|MIMIC-IV]] | Medical Information Mart for Intensive Care IV | EHR | active | 泌尿外科 |

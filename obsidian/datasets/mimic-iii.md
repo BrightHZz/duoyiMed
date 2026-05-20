@@ -9,15 +9,15 @@ last_updated: 2026-05-09
 
 ## 数据概况
 
-| 属性 | 值 |
-|------|-----|
-| 版本 | v1.4 |
-| 源文件大小 | ~6.2 GB (压缩 .csv.gz) |
-| 源文件路径 | `/Users/wuyouhang/Documents/trae_projects/dataset/MIMIC/mimic-iii-1.4/data/` |
-| DuckDB 路径 | `/Users/wuyouhang/Documents/trae_projects/dataset/MIMIC/mimic.db` |
-| DuckDB Schema | `mimic_iii` (26表) |
-| 时间范围 | 2001 - 2012 |
-| 患者数 | 46,520 |
+| 属性            | 值                                                                            |
+| ------------- | ---------------------------------------------------------------------------- |
+| 版本            | v1.4                                                                         |
+| 源文件大小         | ~6.2 GB (压缩 .csv.gz)                                                         |
+| 源文件路径         | `/Users/wuyouhang/Documents/trae_projects/dataset/MIMIC/mimic-iii-1.4/data/` |
+| DuckDB 路径     | `/Users/wuyouhang/Documents/trae_projects/dataset/MIMIC/mimic.db`            |
+| DuckDB Schema | `mimic_iii` (26表)                                                            |
+| 时间范围          | 2001 - 2012                                                                  |
+| 患者数           | 46,520                                                                       |
 
 ## 与 MIMIC-IV 主要区别
 

@@ -1,24 +1,24 @@
 {
   "main": {
-    "id": "3b4af73806aa4273",
+    "id": "618f616e7340574b",
     "type": "split",
     "children": [
       {
-        "id": "05ec7852955143c4",
+        "id": "ab77cb6931530e15",
         "type": "tabs",
         "children": [
           {
-            "id": "41e75e775295547e",
+            "id": "6fb1d08086c8bc90",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "miNiaoWaiKe/projects/kidney-stone-surgery-prediction/coauthor-review/coauthor-review.md",
+                "file": "datasets/pic/PIC.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "coauthor-review"
+              "title": "PIC"
             }
           }
         ]
@@ -27,15 +27,15 @@
     "direction": "vertical"
   },
   "left": {
-    "id": "1735872d3151ba64",
+    "id": "4ea3ffb251dd6775",
     "type": "split",
     "children": [
       {
-        "id": "7e960d152dfccf90",
+        "id": "ea6621d0cad9f117",
         "type": "tabs",
         "children": [
           {
-            "id": "834f30fcc8372e9c",
+            "id": "4a366286006032a8",
             "type": "leaf",
             "state": {
               "type": "file-explorer",
@@ -48,7 +48,7 @@
             }
           },
           {
-            "id": "6b3ae0563bcd44a0",
+            "id": "aae19b6308185fd5",
             "type": "leaf",
             "state": {
               "type": "search",
@@ -65,7 +65,7 @@
             }
           },
           {
-            "id": "7d70c54c6cbc39ff",
+            "id": "02208446059fab8d",
             "type": "leaf",
             "state": {
               "type": "bookmarks",
@@ -81,20 +81,19 @@
     "width": 300
   },
   "right": {
-    "id": "e823666ff7121a60",
+    "id": "83135e52ece8f1e3",
     "type": "split",
     "children": [
       {
-        "id": "19700a64b13188a1",
+        "id": "9c4c134ec98275b8",
         "type": "tabs",
         "children": [
           {
-            "id": "18463a3ae4f498c3",
+            "id": "086ae50c919c700f",
             "type": "leaf",
             "state": {
               "type": "backlink",
               "state": {
-                "file": "miNiaoWaiKe/projects/kidney-stone-surgery-prediction.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,25 +103,24 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "kidney-stone-surgery-prediction 的反向链接列表"
+              "title": "反向链接"
             }
           },
           {
-            "id": "c4412230b89bb15a",
+            "id": "d2d56d50f1b8f9ee",
             "type": "leaf",
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "miNiaoWaiKe/projects/kidney-stone-surgery-prediction.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "kidney-stone-surgery-prediction 的出链列表"
+              "title": "出链"
             }
           },
           {
-            "id": "f023485598cc50f9",
+            "id": "505a1bec995186d6",
             "type": "leaf",
             "state": {
               "type": "tag",
@@ -137,7 +135,7 @@
             }
           },
           {
-            "id": "2a0f0e997e1f60fd",
+            "id": "ff32b99a6f809e56",
             "type": "leaf",
             "state": {
               "type": "all-properties",
@@ -151,18 +149,17 @@
             }
           },
           {
-            "id": "6005a426cf255ca7",
+            "id": "1a174d650155f96a",
             "type": "leaf",
             "state": {
               "type": "outline",
               "state": {
-                "file": "miNiaoWaiKe/projects/kidney-stone-surgery-prediction.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "kidney-stone-surgery-prediction 的大纲"
+              "title": "大纲"
             }
           }
         ]
@@ -183,52 +180,46 @@
       "bases:新建数据库": false
     }
   },
-  "active": "41e75e775295547e",
+  "active": "6fb1d08086c8bc90",
   "lastOpenFiles": [
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/submission/manuscript.md",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/submission/XGBoost Prediction of 30.docx",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/submission.zip",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/submission/XGBoost Prediction of 30-Day Mortality or ICU Admission in Hospitalized Prostate Cancer Patients.pdf",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/submission/# XGBoost Prediction of 30-Day Mortality or ICU Admission in Hospitalized Prostate Cancer Patients.pdf",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/submission/manuscript.pdf",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/manuscript.md",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/supplements.zip",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/supplements 2.zip",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/supplements/models/xgb_final.pkl",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/supplements/models/imputer.pkl",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/supplements/models/features.pkl",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/supplements/README.md",
-    "miNiaoWaiKe/projects/prostate-cancer-prognosis/deployment/README.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/figure1_pre.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/_test_graphviz.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/_test_graphviz.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/figure1_pre.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/phase6-gate6-result.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/Figure1_cohort-flow-diagram.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/Figure1_cohort-flow-diagram.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/FigureS1_decision-curve-analysis.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/Figure4_feature-importance.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/Figure3_calibration-plot.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/figures/Figure2_roc-curve.png",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/Figure1_caption.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/08_acknowledgments.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/07_references.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/06_conclusion.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/05_discussion.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/04_results.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/03_methods.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/02_introduction.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/sections/01_title_abstract.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/tables/Table3_subgroup.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/tables/Table2_performance.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/tables/Table1_baseline.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/FigureS1_caption.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/Figure4_caption.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/Figure3_caption.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/figures/Figure2_caption.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/manuscript_raw.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/submission/manuscript_full.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/tables/table3_subgroup.md",
-    "laoNianYiXue/projects/hdu-geriatric-2026/tables/table2_performance.md"
+    "datasets/pic/pic-patients.md",
+    "datasets/pic/pic-inputevents.md.tmp.36872.4e89ba14e42f",
+    "datasets/pic/pic-diagnoses_icd.md.tmp.36872.822918a80b62",
+    "datasets/pic/pic-surgery_vital_signs.md.tmp.36872.88b045dd0d7d",
+    "datasets/pic/pic-or_exam_reports.md.tmp.36872.ec421582acdd",
+    "datasets/pic/pic-emr_symptoms.md.tmp.36872.ec5a55827ade",
+    "datasets/pic/pic-prescriptions.md.tmp.36872.83531437eb41",
+    "datasets/pic/pic-outputevents.md.tmp.36872.6c29403526a4",
+    "datasets/pic/pic-microbiologyevents.md.tmp.36872.416143dabd01",
+    "datasets/pic/pic-d_items.md.tmp.36872.d868b44e2b95",
+    "datasets/pic/pic-d_icd_diagnoses.md.tmp.36872.56c73bfcffd5",
+    "datasets/pic/pic-prescriptions.md",
+    "datasets/pic/pic-surgery_info.md",
+    "datasets/pic/pic-surgery_vital_signs.md",
+    "datasets/pic/pic-admissions.md",
+    "datasets/pic/PIC.md",
+    "datasets/pic/pic-chartevents.md",
+    "datasets/pic/pic-d_icd_diagnoses.md",
+    "datasets/pic/pic-labevents.md",
+    "datasets/pic/pic-inputevents.md",
+    "datasets/pic/pic-icustays.md",
+    "datasets/pic/pic-d_items.md",
+    "datasets/pic/pic-diagnoses_icd.md",
+    "datasets/pic/pic-d_labitems.md",
+    "datasets/pic-d_labitems.md",
+    "datasets/pic/pic-outputevents.md",
+    "datasets/pic/pic-or_exam_reports.md",
+    "datasets/pic/pic-microbiologyevents.md",
+    "datasets/pic/pic-emr_symptoms.md",
+    "datasets/pic-d_items.md",
+    "datasets/pic-d_icd_diagnoses.md",
+    "datasets/pic-chartevents.md",
+    "datasets/pic-admissions.md",
+    "datasets/PIC.md",
+    "datasets/mimic-iii.md",
+    "miNiaoWaiKe/projects/prostate-cancer-prognosis/figures/feature_importance.png",
+    "laoNianYiXue/projects/frailty-ml-2026/figures/FigureS2_feature_analysis.png",
+    "laoNianYiXue/projects/frailty-ml-2026/figures/Figure2_combined.png",
+    "laoNianYiXue/projects/frailty-ml-2026/figures/Figure1_performance.png"
   ]
 }
