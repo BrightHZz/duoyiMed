@@ -1,6 +1,8 @@
-# DuoyiMed — 多事业部多 Agent 协作科研平台
+# DuoyiMed — duoyi 论文工厂
 
-> 基于钱学森工程控制论，覆盖老年医学和泌尿外科从文献检索到临床部署的全流程 LLM Agent 编排引擎。
+> 一个医生和程序员合作的项目，别人只帮你写论文，而本项目帮你造论文工厂。/This is a joint project by doctors and programmers. While others merely write papers for you, our project builds a full-fledged paper production system.
+
+。基于钱学森工程控制论，覆盖老年医学和泌尿外科从文献检索到临床部署的全流程 LLM Agent 编排引擎。
 
 ## 核心理念
 
@@ -111,57 +113,54 @@ duoyi/
 
 - Python 3.10+
 - Anthropic / OpenAI / DeepSeek API Key
-- Streamlit (Phase 7)
 
 ### 安装
 
 ```bash
+git clone https://gitee.com/wangduoduogit/duoyi.git
+cd duoyi
 pip install -r requirements.txt
 ```
 
-### 配置环境变量
-
-创建 `.env` 文件（或设置环境变量）：
+### 配置 API Key
 
 ```bash
-# LLM
-ANTHROPIC_API_KEY=your-key-here
-LLM_PROVIDER=anthropic          # anthropic | openai | deepseek
-LLM_MODEL=claude-sonnet-4-6
-
-# 知识库路径 (Obsidian vault)
-MAW_OBSIDIAN_HOME=/path/to/obsidian
-
-# 数据源路径 (可选，按需配置)
-MAW_DATA_HOME=/path/to/datasets
-CHARLS_DATA_DIR=/path/to/charls
-MIMIC_DATA_DIR=/path/to/mimic
+export ANTHROPIC_API_KEY="your-key-here"
 ```
 
-### 运行
+可选配置（有默认值）：
 
 ```bash
-# 交互模式
-python run_research.py
-
-# 单次研究请求
-python run_research.py "用 CHARLS 数据预测 2 年衰弱转换，设计完整方案"
-
-# 文献综述
-python run_research.py --workflow literature "近2年表观遗传时钟预测衰弱的文献"
-
-# 指定模型
-python run_research.py --model claude-opus-4-7 "评估这个研究方向"
-
-# 知识库自主充实
-python run_research.py --workflow kb_enrich --division geriatrics
-
-# 运行分析报告
-python run_research.py --analyze --analyze-days 90
-
-# Shell 快捷方式
-./research "你的研究问题"
+export LLM_PROVIDER=anthropic          # anthropic | openai | deepseek
+export LLM_MODEL=claude-sonnet-4-6
 ```
+
+### 使用
+
+需要先安装 Claude Code。进入项目目录，启动 Claude Code 后调用 `duoyi` 技能：
+
+```bash
+cd duoyi
+claude
+```
+
+进入 Claude Code 对话后：
+
+```
+/duoyi 用 CHARLS 数据预测 2 年衰弱转换，设计完整方案
+/duoyi 近两年表观遗传时钟预测衰弱的文献综述
+/duoyi 评估这个建模方案
+```
+
+也支持直接命令行传参：
+
+```bash
+claude -p "/duoyi 用 CHARLS 数据预测 2 年衰弱转换"
+```
+
+### 注意事项
+
+- 需要先设置 `ANTHROPIC_API_KEY` 环境变量
 
 ### 工作流类型
 
