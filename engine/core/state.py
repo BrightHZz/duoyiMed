@@ -166,7 +166,7 @@ class OrchestratorState(TypedDict):
     user_intent: str  # new_project | literature_review | paper_writing | quick_consult | status_check
 
     # --- 公司模式 ---
-    active_division: str  # "geriatrics" | "urology"
+    active_division: str  # "geriatrics" | "urology" | "pediatrics"
     division_state: dict  # {division_id: DivisionState}
 
     # --- 任务编排 ---
