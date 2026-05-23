@@ -27,8 +27,10 @@ class KnowledgeBaseManager:
         return self.vault
 
     def _ensure_dirs(self):
-        for d in ["projects", "literature", "methods", "datasets", "concepts", "templates"]:
-            (self.vault / d).mkdir(parents=True, exist_ok=True)
+        std_dirs = ["projects", "literature", "methods", "datasets", "concepts", "templates"]
+        for vault_path in [self.vault] + list(self.vaults.values()):
+            for d in std_dirs:
+                (vault_path / d).mkdir(parents=True, exist_ok=True)
 
     # ================================================================
     # YAML Frontmatter 解析

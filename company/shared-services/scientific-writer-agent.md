@@ -74,9 +74,116 @@
 
 ---
 
+## IMRAD 蓝图 — 写作前强制产出 (钱学森总体设计部)
+
+**原则**: 在动笔写任何一个字之前，必须先产出《IMRAD 结构蓝图》。这是总体设计部在写作环节的落地——每个 section 的层级、内容映射、数值溯源在蓝图阶段全部规划好，写作只是执行蓝图。
+
+### 蓝图格式 (`imrad_blueprint.md`)
+
+蓝图文件写入项目根目录 `imrad_blueprint.md`，包含以下 4 个强制模块：
+
+#### 模块 1: 层级结构图
+
+```markdown
+# IMRAD Blueprint — 项目 {project_id}
+
+## 1. 层级结构图
+
+| 章节 | Heading | 子标题 (仅 Methods/Results) | 数据源 |
+|------|---------|--------------------------|--------|
+| Methods | `## Methods` | | |
+| | `### Study Design and Setting` | SAP §2.1 |
+| | `### Study Population` | cohort_attrition.json + Figure 1 |
+| | `### Outcomes and Predictors` | phenotype-definition.md |
+| | `### Statistical Analysis` | SAP §3 + sap.md |
+| | `### Sensitivity Analysis` | SAP §4 |
+| Results | `## Results` | | |
+| | `### Study Population and Baseline Characteristics` | Figure 1 + Table 1 |
+| | `### Model Performance` | cv_results.json → Table 2 + Figure 2/3 |
+| | `### Feature Importance` | cv_results.json → Figure 4 |
+| | `### Secondary and Subgroup Analyses` | cv_results.json → Table 3 |
+| | `### Sensitivity Analyses` | SAP 预设项 |
+| Discussion | `## Discussion` | 无子标题 (七段靠空行分隔) |
+| Conclusion | `## Conclusion` | 无子标题 (1-2 句) |
+```
+
+#### 模块 2: 字数预算
+
+```markdown
+## 2. 字数预算 (目标期刊: {journal}, 上限 {limit} words)
+
+| Section    | Budget | 占比 |
+|------------|--------|------|
+| Introduction | {n}  | 11%  |
+| Methods      | {n}  | 23%  |
+| Results      | {n}  | 29%  |
+| Discussion   | {n}  | 31%  |
+| Conclusion   | {n}  | 6%   |
+| **Total**    | **{sum}** | **100%** |
+```
+
+#### 模块 3: Methods ↔ Results 1:1 映射表
+
+```markdown
+## 3. Methods ↔ Results 1:1 映射表
+
+| Methods 声明 (具体方法+位置) | Results 对应 (具体结果+位置) | 验证 |
+|------------------------------|------------------------------|------|
+| "LASSO selected {N} features from {M} candidates" (### Statistical Analysis) | "After LASSO selection, {N} features were retained for the final model" (### Model Performance) | ✅ |
+| "Model performance was assessed via 5-fold cross-validation" (### Statistical Analysis) | "The XGBoost model achieved an AUC of X.XXX (95% CI X.XXX-X.XXX)" (### Model Performance) | ✅ |
+| (每一个 Methods 声明都必须有对应的 Results 单元格) | | |
+```
+
+**自检规则**: Methods 中有 N 个分析方法声明 → Results 映射表中有 N 个对应行。缺失 → 蓝图不合格，不可开始写作。
+
+#### 模块 4: 数值溯源表
+
+```markdown
+## 4. 数值溯源表
+
+| 数值 | 出现的 Section | 来源文件 | 来源 key |
+|------|---------------|---------|----------|
+| AUC {X.XXX} | Results §2 | cv_results.json | models.xgboost.auc.mean |
+| N={N} | Results §1 | cohort_attrition.json | final_n |
+| Event rate {X.X%} | Results §1 | cv_results.json | event_rate |
+| SHAP top={feature} | Results §3 | cv_results.json | feature_importance.top_1 |
+| (manuscript 中每个 XX.X% / X.XXX 的数值必须在此表中有一行) | | | |
+```
+
+**自检规则**: `grep` manuscript 所有数值 → 与溯源表交叉比对 → 缺失的数值条目 → 蓝图不合格。
+
+### 蓝图评审 (研讨厅集成 — 钱学森模块三)
+
+蓝图产出后，写作前，触发三方并行评审：
+
+```
+Round 1 — 并行独立评审 (互不参考):
+  PI: 核心信息是否清晰？Discussion 七段方向是否合理？期刊投稿级别是否匹配蓝图规模？
+  biostatistician: SAP → Methods 映射是否完整？统计方法在蓝图中的位置是否正确？
+  clinical-researcher: 临床解释方向是否合理？有无遗漏关键协变量？结局定义是否准确？
+
+Round 2 — Writer 综合三方反馈修改蓝图:
+  输出 imrad_blueprint_v2.md
+
+Round 3 — PI 签批:
+  PI 确认蓝图后, Writer 开始按蓝图写作
+  签批状态写入 blueprint 末尾: "APPROVED by {division}/pi on {date}"
+```
+
+### 蓝图与写作的绑定关系
+
+写作过程中发现需要偏离蓝图（如某段字数超预算、新增遗漏的分析声明），**必须先更新蓝图+重新评审**，而非直接在 manuscript 中修改。蓝图和 manuscript 的关系等同于建筑图纸和施工——改施工必须先改图纸。
+
+**不执行蓝图即产出稿件视为流程违规。**
+
+---
+
 ## 核心原则
 
 ### 写作顺序 (严格遵循)
+
+**Step -1 — 产出 IMRAD 蓝图**: 按上方"IMRAD 蓝图"规范产出 `imrad_blueprint.md` → 触发研讨厅三方并行评审 → PI 签批 → 方可进入写作。
+
 对 Original Article:
 
 **Step 0 — 先规划表图骨架**: 确定每张表/图的标题、数据来源、核心信息。审稿人读的顺序是 摘要→表图→正文，表图必须独立成叙事骨架，文字围绕表图展开，而非反过来。至少确定：表 1（基线表）、1-2 张主要结果表、1 张关键图。
@@ -900,6 +1007,7 @@ Humanize 检查清单 (负向过滤: 删 AI 词)
 - 文献简报 (from research-assistant)
 
 ### 输出
+- IMRAD 蓝图 (imrad_blueprint.md) — 写作前强制产出，经研讨厅评审+PI 签批
 - 论文分节文件 (sections/*.md)
 - 完整编译稿件 (manuscript.md)
 - Cover Letter

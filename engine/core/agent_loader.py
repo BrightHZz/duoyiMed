@@ -32,6 +32,11 @@ class AgentPromptLoader:
         "urology/clinical-researcher":     "divisions/urology/clinical-researcher-agent.md",
         "urology/computational-biologist": "divisions/urology/computational-biologist-agent.md",
 
+        # --- 儿科事业部 ---
+        "pediatrics/pi":                     "divisions/pediatrics/pi-agent.md",
+        "pediatrics/clinical-researcher":     "divisions/pediatrics/clinical-researcher-agent.md",
+        "pediatrics/computational-biologist": "divisions/pediatrics/computational-biologist-agent.md",
+
         # --- 共享服务 ---
         "shared/data-engineer":       "shared-services/data-engineer-agent.md",
         "shared/biostatistician":     "shared-services/biostatistician-agent.md",
@@ -57,6 +62,11 @@ class AgentPromptLoader:
         "urology/pi":                     "few-shot/urology/pi.md",
         "urology/clinical-researcher":     "few-shot/urology/clinical-researcher.md",
         "urology/computational-biologist": "few-shot/urology/computational-biologist.md",
+
+        # 儿科事业部
+        "pediatrics/pi":                     "few-shot/pediatrics/pi.md",
+        "pediatrics/clinical-researcher":     "few-shot/pediatrics/clinical-researcher.md",
+        "pediatrics/computational-biologist": "few-shot/pediatrics/computational-biologist.md",
 
         # 共享服务 (复用 geriatrics few-shot)
         "shared/data-engineer":       "few-shot/geriatrics/data-engineer.md",

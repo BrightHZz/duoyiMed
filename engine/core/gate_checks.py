@@ -953,7 +953,7 @@ def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
                 return True, "跳过 (无 Discussion 章节)"
 
             # 提取 Discussion 内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if not disc_match:
                 return True, "跳过"
             disc = disc_match.group(1)
@@ -1035,7 +1035,7 @@ def check_discussion_explanation_section(outputs: dict, orch) -> tuple:
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             if "## Discussion" not in output:
                 return True, "跳过 (无 Discussion 章节)"
-            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if not disc_match:
                 return True, "跳过"
             disc = disc_match.group(1)
@@ -1081,7 +1081,7 @@ def check_discussion_no_subheadings(outputs: dict, orch) -> tuple:
             if "## Discussion" not in output:
                 return True, "跳过 (无 Discussion 章节)"
             # 提取 Discussion 到下一个 ## 之间的内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if not disc_match:
                 return True, "跳过"
             disc_content = disc_match.group(1)
@@ -1126,7 +1126,7 @@ def check_abstract_word_count(outputs: dict, orch) -> tuple:
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             import re
             abs_match = re.search(
-                r'## Abstract\n(.*?)(?=##\s|\Z)', output, re.DOTALL | re.IGNORECASE
+                r'## Abstract\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL | re.IGNORECASE
             )
             if abs_match:
                 text = abs_match.group(1).strip()
@@ -1245,7 +1245,7 @@ def check_normality_test_reported(outputs: dict, orch) -> tuple:
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             methods_section = output
             # Extract Methods section
-            m = re.search(r'## Methods?\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            m = re.search(r'## Methods?\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if m:
                 methods_section = m.group(1)
             has_normality = any(kw in methods_section.lower() for kw in [
@@ -1263,7 +1263,7 @@ def check_missing_data_reported(outputs: dict, orch) -> tuple:
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             methods_section = output
-            m = re.search(r'## Methods?\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            m = re.search(r'## Methods?\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if m:
                 methods_section = m.group(1)
             has_missing_rate = any(kw in methods_section.lower() for kw in [
@@ -1287,7 +1287,7 @@ def check_software_version_reported(outputs: dict, orch) -> tuple:
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             methods_section = output
-            m = re.search(r'## Methods?\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            m = re.search(r'## Methods?\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if m:
                 methods_section = m.group(1)
             # Check for common tools + version patterns
@@ -1624,7 +1624,7 @@ def check_humanize_quality(outputs: dict, orch) -> tuple:
                 output, re.DOTALL
             )
             conclusion_match = re.search(
-                r'## Conclusion\n(.*?)(?=##\s|\Z)',
+                r'## Conclusion\n(.*?)(?=\n##\s|\Z)',
                 output, re.DOTALL
             )
 
@@ -3620,6 +3620,195 @@ def check_deployment_config_complete(outputs: dict, orch) -> tuple:
     return True, "部署配置完整 ✓"
 
 
+
+
+# ================================================================
+# IMRAD 结构验真检查 (钱学森模块二: 可靠性工程 — 结构一致性交叉验证)
+# 2026-05-22 新增, 起因: IMRAD 规范在 Agent prompt 中但无强制脚本验证
+# ================================================================
+
+def check_imrad_blueprint_exists(outputs: dict, orch) -> tuple:
+    """检查 imrad_blueprint.md 是否存在 (写作前强制产出)"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+    blueprint_path = os.path.join(proj_dir, 'imrad_blueprint.md')
+    if os.path.exists(blueprint_path):
+        content = open(blueprint_path, encoding='utf-8').read()
+        has_approval = 'APPROVED' in content
+        if has_approval:
+            return True, "IMRAD 蓝图存在且已获 PI 签批"
+        else:
+            return False, "IMRAD 蓝图存在但缺少 PI 签批"
+    return False, (
+        "IMRAD 蓝图缺失 — 写作前必须产出 imrad_blueprint.md"
+    )
+
+
+def check_imrad_heading_hierarchy(outputs: dict, orch) -> tuple:
+    """IMRAD heading 层级验真"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+
+    candidates = [
+        os.path.join(proj_dir, 'submission', 'manuscript.md'),
+        os.path.join(proj_dir, 'manuscript.md'),
+    ]
+    content = None
+    for fp in candidates:
+        if os.path.exists(fp):
+            content = open(fp, encoding='utf-8').read()
+            break
+
+    if content is None:
+        return False, "manuscript.md 未找到"
+
+    errors = []
+
+    h2_headers = re.findall(r'^## (.+)$', content, re.MULTILINE)
+    required_h2 = ['Introduction', 'Methods', 'Results', 'Discussion', 'Conclusion']
+    for h2 in required_h2:
+        found = any(h2.lower() in h.lower() for h in h2_headers)
+        if not found:
+            errors.append(f"missing ## {h2}")
+
+    intro_match = re.search(r'(?:\n|^)## Introduction\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if intro_match and re.search(r'\n###\s', intro_match.group(1)):
+        errors.append("### under Introduction")
+
+    methods_match = re.search(r'## Methods\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if methods_match:
+        ms = methods_match.group(1)
+        m_h3 = [h.lower() for h in re.findall(r'^### (.+)$', ms, re.MULTILINE)]
+        for rm in ['Study Design', 'Study Population', 'Outcomes and Predictors',
+                     'Statistical Analysis', 'Sensitivity Analysis']:
+            if not any(rm.lower() in h for h in m_h3):
+                errors.append(f"Methods missing ### {rm}")
+        if re.search(r'####\s', ms):
+            errors.append("#### under Methods")
+    else:
+        errors.append("## Methods not found")
+
+    results_match = re.search(r'## Results\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if results_match:
+        rs = results_match.group(1)
+        r_h3 = [h.lower() for h in re.findall(r'^### (.+)$', rs, re.MULTILINE)]
+        for rr in ['Study Population', 'Model Performance', 'Feature Importance',
+                     'Secondary', 'Sensitivity']:
+            if not any(rr.lower() in h for h in r_h3):
+                errors.append(f"Results missing ### {rr}")
+        if re.search(r'####\s', rs):
+            errors.append("#### under Results")
+    else:
+        errors.append("## Results not found")
+
+    disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if disc_match:
+        ds = disc_match.group(1)
+        if re.search(r'\n###\s', ds):
+            errors.append("### under Discussion (use blank-line-separated paragraphs)")
+        if re.search(r'####\s', ds):
+            errors.append("#### under Discussion")
+    else:
+        errors.append("## Discussion not found")
+
+    if '### Conclusion' in content:
+        errors.append("Conclusion must be ## not ###")
+    if not re.search(r'^## Conclusion', content, re.MULTILINE):
+        errors.append("## Conclusion missing")
+
+    if errors:
+        return False, "IMRAD heading: " + "; ".join(errors)
+    return True, "IMRAD heading hierarchy OK"
+
+
+def check_methods_results_1_to_1(outputs: dict, orch) -> tuple:
+    """Methods/Results 1:1 mapping check"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+
+    bp = os.path.join(proj_dir, 'imrad_blueprint.md')
+    if not os.path.exists(bp):
+        return False, "IMRAD blueprint missing, cannot verify Methods/Results mapping"
+
+    blueprint = open(bp, encoding='utf-8').read()
+    mapping_match = re.search(
+        r'## 3\. Methods.*?Results.*?\n\n(.*?)(?=\n##\s|\n---|\Z)',
+        blueprint, re.DOTALL
+    )
+    if not mapping_match:
+        return False, "Blueprint missing module 3 (Methods/Results mapping table)"
+
+    mapping_text = mapping_match.group(1)
+    data_rows = [
+        r for r in mapping_text.split('\n')
+        if r.strip().startswith('|') and not r.strip().startswith('|---')
+        and 'Methods' not in r and 'Results' not in r and '验证' not in r
+    ]
+
+    if len(data_rows) < 3:
+        return False, f"Only {len(data_rows)} mapping rows, need >=3"
+
+    for i, row in enumerate(data_rows):
+        cells = [c.strip() for c in row.split('|') if c.strip()]
+        if len(cells) < 2:
+            return False, f"Mapping row {i+1} incomplete"
+
+    return True, f"Methods/Results 1:1 mapping OK ({len(data_rows)} rows)"
+
+
+def check_imrad_word_budget(outputs: dict, orch) -> tuple:
+    """IMRAD word budget check"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+
+    bp = os.path.join(proj_dir, 'imrad_blueprint.md')
+    budget = {}
+    if os.path.exists(bp):
+        blueprint = open(bp, encoding='utf-8').read()
+        bm = re.search(r'## 2\. 字数预算.*?\n\n(.*?)(?=\n##\s|\n---|\Z)', blueprint, re.DOTALL)
+        if bm:
+            for line in bm.group(1).split('\n'):
+                m = re.match(r'\|\s*(\w+)\s*\|\s*(\d+)\s*\|', line)
+                if m:
+                    budget[m.group(1).lower()] = int(m.group(2))
+
+    candidates = [
+        os.path.join(proj_dir, 'submission', 'manuscript.md'),
+        os.path.join(proj_dir, 'manuscript.md'),
+    ]
+    content = None
+    for fp in candidates:
+        if os.path.exists(fp):
+            content = open(fp, encoding='utf-8').read()
+            break
+
+    if content is None:
+        return False, "manuscript.md not found"
+
+    sections = {}
+    for sec in ['Introduction', 'Methods', 'Results', 'Discussion', 'Conclusion']:
+        m = re.search(rf'## {sec}\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+        if m:
+            sections[sec.lower()] = len(m.group(1).split())
+
+    errors = []
+    for sec, bw in budget.items():
+        actual = sections.get(sec)
+        if actual is None:
+            continue
+        if abs(actual - bw) / bw > 0.50:
+            errors.append(f"{sec}: {actual} vs budget {bw} words (>{50}%)")
+
+    if errors:
+        return False, "Word budget exceeded (>50%): " + "; ".join(errors)
+
+    total = sum(sections.values())
+    if total > 5000:
+        return False, f"Total {total} words exceeds 5000 limit"
+
+    return True, f"Word budget OK (total {total} words)"
+
+
 # ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
@@ -3736,6 +3925,10 @@ GATE_DEFINITIONS = {
             "categorical_labels": check_categorical_label_consistency,
             "subgroup_n_consistency": check_subgroup_n_consistency,
             "doi_title_match": check_doi_title_match,
+            "imrad_heading_hierarchy": check_imrad_heading_hierarchy,
+            "imrad_methods_results_1to1": check_methods_results_1_to_1,
+            "imrad_word_budget": check_imrad_word_budget,
+            "imrad_blueprint_exists": check_imrad_blueprint_exists,
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

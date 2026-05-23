@@ -159,6 +159,7 @@ shared/data-engineer:
 |---------|------|------|
 | `geriatrics/{role}` | 老年医学事业部 | 事业部专属 Agent |
 | `urology/{role}` | 泌尿外科事业部 | 事业部专属 Agent |
+| `pediatrics/{role}` | 儿科事业部 | 事业部专属 Agent |
 | `shared/{role}` | 共享服务 | 所有事业部共享 |
 | `chief-scientist` | 首席科学家 | 公司管理层 |
 | `company-orchestrator` | 公司编排器 | 公司管理层 |

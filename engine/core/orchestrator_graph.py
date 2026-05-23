@@ -688,7 +688,7 @@ class ResearchOrchestrator:
     # 事业部路由 (Company Mode)
     # ================================================================
 
-    def _classify_division(self, user_request: str) -> str:
+    def _classify_division(self, user_request: str) -> str:  # 'geriatrics' | 'urology' | 'pediatrics'
         """根据临床领域关键词确定事业部，不依赖数据源名。
 
         数据源是公司资产，不应影响事业部路由。
@@ -710,6 +710,16 @@ class ResearchOrchestrator:
         ]
         if any(kw.lower() in req for kw in urology_kw):
             return "urology"
+
+        # 儿科关键词
+        pediatrics_kw = [
+            "儿科", "儿童", "小儿", "新生儿", "婴幼儿", "婴儿",
+            "pediatric", "paediatric", "picu", "nicu", "neonat",
+            "child", "children", "infant", "adolescent",
+            "pic", "出生缺陷", "先天",
+        ]
+        if any(kw.lower() in req for kw in pediatrics_kw):
+            return "pediatrics"
 
         # 老年医学关键词
         geriatrics_kw = [
@@ -749,6 +759,7 @@ class ResearchOrchestrator:
             (["nhanes"], "NHANES"),
             (["mimic-iv", "mimic iv", "mimic"], "MIMIC-IV"),
             (["seer"], "SEER"),
+            (["pic"], "PIC"),
         ]
         for keywords, source_name in source_patterns:
             if any(kw in req for kw in keywords):
