@@ -4,6 +4,14 @@
 
 。基于钱学森工程控制论，覆盖老年医学和泌尿外科从文献检索到临床部署的全流程 LLM Agent 编排引擎。
 
+## 项目组
+
+| 成员 | 单位 | 角色 | 邮箱 |
+|------|------|------|------|
+| 吴医生 | 武进人民医院泌尿外科 | 泌尿外科 | jsdxwcs@163.com |
+| 胥医生 | 金坛人民医院老年医学科 | 老年医学 | 1361600857@qq.com |
+| 王多多 | 江南银行信息技术部 | 技术开发 | 1296584078@qq.com |
+
 ## 核心理念
 
 将科研流程建模为**多事业部企业**，每个事业部（老年医学 / 泌尿外科）拥有专属 PI、临床研究员和计算生物学研究员，共享数据工程、生物统计、ML 工程、学术写作等公共服务平台。通过 LangGraph 编排引擎实现多 Agent 的并行协作、闸门质量控制和跨阶段反馈返工。
@@ -117,7 +125,7 @@ duoyi/
 ### 安装
 
 ```bash
-git clone https://gitee.com/wangduoduogit/duoyi.git
+git clone https://github.com/BrightHZz/duoyiMed.git
 cd duoyi
 pip install -r requirements.txt
 ```
