@@ -41,6 +41,7 @@ from engine.core.gate_checks import (
     check_software_version_reported,
     check_conclusion_heading_level,
     check_doi_verification,
+    check_doi_title_match,
     check_ref_count,
     check_ref_recency,
     check_all_refs_cited_in_text,
@@ -73,6 +74,7 @@ GATE6_PYTHON_CHECKS = [
     # 引用检查
     ("all_refs_have_doi", check_all_refs_have_doi, "参考文献 DOI 覆盖 ≥80%"),
     ("doi_verified", check_doi_verification, "DOI 验证通过 (fake=0)"),
+    ("doi_title_match", check_doi_title_match, "DOI 标题一致性 — CrossRef 解析验证"),
     ("ref_count", check_ref_count, "参考文献 ≥25/≥45"),
     ("ref_recency", check_ref_recency, "参考文献时效性 ≥80%"),
     ("all_refs_cited", check_all_refs_cited_in_text, "每篇参考文献在正文中被引用"),
