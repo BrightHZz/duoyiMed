@@ -196,6 +196,15 @@ def check_submission_structure_integrity(submission_dir: Path) -> list[str]:
 
 
 def main():
+    _fp = Path(__file__).resolve()
+    if _fp.parent.parent.name != "engine":
+        import warnings
+        warnings.warn(
+            f"此脚本的项目本地副本已过时。请删除并使用引擎版本: "
+            f"python engine/scripts/{_fp.name} --project-dir .",
+            DeprecationWarning, stacklevel=2
+        )
+
     parser = argparse.ArgumentParser(
         description="稿件组装 — 将零件层组装为投稿层"
     )

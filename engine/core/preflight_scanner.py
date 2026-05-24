@@ -141,6 +141,9 @@ class PreflightScanner:
         # 7. 数据真实性扫描 (2026-05-24)
         self._check_data_authenticity(all_scripts_data, failures, warnings)
 
+        # 8. 脚本分叉检测 (2026-05-24)
+        self._check_script_fork(project_dir, warnings)
+
         # 构建报告
         report_lines = [f"Preflight Safety Scan — {len(scripts_to_scan)} 脚本"]
         report_lines.append("=" * 60)
@@ -545,6 +548,46 @@ class PreflightScanner:
                         f"{script_name}: no reference to cv_results.json — "
                         f"figures must read from baseline"
                     )
+
+
+    # ================================================================
+    # 8. 脚本分叉检测 (2026-05-24)
+    # ================================================================
+    ENGINE_SHARED_SCRIPTS = [
+        "run_gate6.py",
+        "run_assembly.py",
+        "run_humanize.py",
+        "run_reference_order.py",
+        "run_preflight_data.py",
+        "run_imrad_check.py",
+        "run_preflight.py",
+    ]
+
+    def _check_script_fork(self, project_dir, warnings: list):
+        """检测项目 scripts/ 下是否存在与 engine/scripts/ 同名的脚本副本。
+
+        项目可以有自己的 generate_*.py / train_model.py，但共享脚本必须使用引擎版本。
+        """
+        engine_dir = Path(__file__).resolve().parent.parent / "scripts"
+
+        for script_name in self.ENGINE_SHARED_SCRIPTS:
+            project_copy = project_dir / "scripts" / script_name
+            if project_copy.exists():
+                engine_copy = engine_dir / script_name
+                if engine_copy.exists():
+                    # Compare modification times to give more context
+                    p_mtime = project_copy.stat().st_mtime
+                    e_mtime = engine_copy.stat().st_mtime
+                    if p_mtime < e_mtime:
+                        warnings.append(
+                            f"项目存在本地脚本副本 {script_name}，版本旧于引擎版本。"
+                            f"请删除项目副本，改用: python engine/scripts/{script_name} --project-dir ."
+                        )
+                    else:
+                        warnings.append(
+                            f"项目存在本地脚本副本 {script_name}。"
+                            f"共享脚本应使用引擎版本: python engine/scripts/{script_name} --project-dir ."
+                        )
 
 
 # ================================================================

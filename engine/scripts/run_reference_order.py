@@ -148,6 +148,15 @@ def run_reference_order(project_dir: Path, check_only: bool = False) -> dict:
 
 
 def main():
+    _fp = Path(__file__).resolve()
+    if _fp.parent.parent.name != "engine":
+        import warnings
+        warnings.warn(
+            f"此脚本的项目本地副本已过时。请删除并使用引擎版本: "
+            f"python engine/scripts/{_fp.name} --project-dir .",
+            DeprecationWarning, stacklevel=2
+        )
+
     parser = argparse.ArgumentParser(description="Vancouver reference reordering")
     parser.add_argument("--project-dir", required=True, help="Project root directory")
     parser.add_argument("--check-only", action="store_true",

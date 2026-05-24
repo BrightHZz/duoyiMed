@@ -176,6 +176,16 @@ def run_gate6(project_dir: Path) -> dict:
 
 
 def main():
+    # 检测：如果此脚本被复制到项目 scripts/ 下运行，发出 deprecated 警告
+    _fp = Path(__file__).resolve()
+    if _fp.parent.parent.name != "engine":
+        import warnings
+        warnings.warn(
+            f"此脚本的项目本地副本已过时。请删除并使用引擎版本: "
+            f"python engine/scripts/{_fp.name} --project-dir .",
+            DeprecationWarning, stacklevel=2
+        )
+
     parser = argparse.ArgumentParser(
         description="Gate 6 自动化检查 — 执行 28 项 Python auto check"
     )
