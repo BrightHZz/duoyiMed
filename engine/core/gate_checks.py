@@ -3810,6 +3810,186 @@ def check_imrad_word_budget(outputs: dict, orch) -> tuple:
 
 
 # ============================================================
+# Phase 6: Table 1 分层数据来源验证 (2026-05-24)
+# ============================================================
+def check_table_stratification_provenance(outputs: dict, orch) -> tuple:
+    """验证 Table 1 分层变量来自真实数据源（features_cache.pkl），非 np.random 模拟。
+
+    跨事业部通用: 检测 eFI / frailty_index / Gleason / risk_score 等分层变量。
+    """
+    import os
+    import re
+    import json
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Step 1: Scan generate_tables.py for np.random injection
+    gen_tables = proj_dir / "scripts" / "generate_tables.py"
+    if not gen_tables.exists():
+        gen_tables = proj_dir / "generate_tables.py"
+    if not gen_tables.exists():
+        return True, "跳过 (未找到 generate_tables.py)"
+
+    source = gen_tables.read_text(encoding="utf-8")
+    violations = []
+
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        # np.random used for data generation (not seed/RandomState)
+        m = re.match(r'(\w+)\s*=\s*np\.random\.(?!seed\b|RandomState\b)(\w+)\(', stripped)
+        if m:
+            var_name = m.group(1).lower()
+            func = m.group(2)
+            data_kw = r'(efi|frail|strata|stratum|group_label|risk_score|grade|stage|label|class|cluster|synthetic)'
+            if re.search(data_kw, var_name):
+                ctx = "\n".join(source.split("\n")[max(0,i-3):min(len(source.split("\n")),i+8)])
+                if re.search(r'(Table|table|stratif|group.*by|patients?|cohort)', ctx):
+                    violations.append(f"L{i}: np.random.{func}() -> '{var_name}' in stratification context")
+
+        if re.search(r'(simulate|synthetic).*?(data|score|strata|cohort|patient)', stripped, re.IGNORECASE):
+            violations.append(f"L{i}: simulated/synthetic keyword: {stripped[:100]}")
+
+    # Step 2: Verify stratification source — features_cache.pkl or strata_labels.pkl
+    uses_pkl = bool(re.search(r'(features_cache\.pkl|cache\[.?X.?\])', source))
+
+    # Step 3: Cross-validate Table 1 values against pkl
+    pkl_path = proj_dir / "outputs" / "features_cache.pkl"
+    table1_md = proj_dir / "tables" / "Table1_baseline.md"
+    pkl_deviations = []
+
+    if pkl_path.exists() and table1_md.exists():
+        import pickle
+        try:
+            with open(pkl_path, "rb") as f:
+                cache = pickle.load(f)
+            X = cache.get("X", cache)
+
+            strata_col = None
+            for col in ["efi_score", "frailty_index", "FI_score", "gleason_score", "risk_score"]:
+                if hasattr(X, "columns") and col in X.columns:
+                    strata_col = col
+                    break
+
+            if strata_col is not None:
+                efi_real = X[strata_col].values
+                robust_real = efi_real[efi_real < 0.10]
+                prefrail_real = efi_real[(efi_real >= 0.10) & (efi_real < 0.25)]
+                frail_real = efi_real[efi_real >= 0.25]
+
+                t1_text = table1_md.read_text(encoding="utf-8")
+
+                efi_row = re.search(
+                    r"eFI.*?\|\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\)",
+                    t1_text
+                )
+
+                if efi_row:
+                    t1_overall = float(efi_row.group(1))
+                    pkl_mean = float(efi_real.mean())
+                    dev = abs(t1_overall - pkl_mean) / max(pkl_mean, 0.001) * 100
+                    if dev > 0.5:
+                        pkl_deviations.append(f"eFI mean: Table1={t1_overall:.4f} vs pkl={pkl_mean:.4f} ({dev:.1f}%)")
+
+                    for g_idx, g_name, g_data in [
+                        (3, "Robust", robust_real), (5, "Pre-frail", prefrail_real), (7, "Frail", frail_real)
+                    ]:
+                        if efi_row.group(g_idx):
+                            t1_val = float(efi_row.group(g_idx))
+                            pkl_val = float(g_data.mean()) if len(g_data) > 0 else 0
+                            if pkl_val > 0:
+                                d = abs(t1_val - pkl_val) / pkl_val * 100
+                                if d > 0.5:
+                                    pkl_deviations.append(f"{g_name}: Table1={t1_val:.4f} vs pkl={pkl_val:.4f} ({d:.1f}%)")
+        except Exception as e:
+            pkl_deviations.append(f"pkl validation error: {str(e)}")
+
+    if violations:
+        return False, f"Data-injection patterns detected: {'; '.join(violations)}"
+    if pkl_deviations:
+        return False, f"Table 1 deviates from pkl: {'; '.join(pkl_deviations)}"
+    return True, f"Source={'pkl' if uses_pkl else 'verified'}, violations=0, pkl_deviations=0"
+
+
+# ============================================================
+# Phase 6: Vancouver 参考文献顺序检查 (2026-05-24)
+# ============================================================
+def check_vancouver_reference_order(outputs: dict, orch) -> tuple:
+    """验证参考文献按首次引用顺序编号（Vancouver 风格）。
+
+    跨事业部通用: 读取 manuscript 正文引用顺序并与 References 列表对比。
+    """
+    import os
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Find manuscript
+    manuscript_path = proj_dir / "submission" / "manuscript.md"
+    if not manuscript_path.exists():
+        return True, "跳过 (未找到 manuscript.md)"
+
+    manuscript = manuscript_path.read_text(encoding="utf-8")
+
+    # Cut at References section
+    ref_match = re.search(r"\n#+\s*References?\s*\n", manuscript)
+    body = manuscript[:ref_match.start()] if ref_match else manuscript
+
+    seen = []
+    violations = []
+    for match in re.finditer(r"\[(\d+(?:,\d+)*)\]", body):
+        nums = [int(x) for x in match.group(1).split(",")]
+        for n in nums:
+            if n not in seen:
+                seen.append(n)
+                expected = len(seen)
+                if n != expected:
+                    violations.append(f"[{n}] at position {expected} (should be [{expected}])")
+
+    if not seen:
+        return True, "跳过 (正文中未找到引用)"
+
+    # Check reference list is sequential 1..N
+    ref_nums = set()
+    for m in re.finditer(r"^(\d+)\.\s", manuscript, re.MULTILINE):
+        ref_nums.add(int(m.group(1)))
+    expected_refs = set(range(1, len(seen) + 1))
+    missing = expected_refs - ref_nums
+    extra = ref_nums - expected_refs
+
+    if violations or missing or extra:
+        details = []
+        if violations:
+            details.append(f"Order: {'; '.join(violations[:5])}")
+        if missing:
+            details.append(f"Body refs missing from list: {sorted(missing)}")
+        if extra:
+            details.append(f"List refs not in body: {sorted(extra)}")
+        return False, " | ".join(details)
+
+    max_ref = max(ref_nums) if ref_nums else 0
+    return True, f"{len(seen)} refs in Vancouver order, 1..{max_ref} sequential"
+
+
+# ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
 
@@ -3929,6 +4109,8 @@ GATE_DEFINITIONS = {
             "imrad_methods_results_1to1": check_methods_results_1_to_1,
             "imrad_word_budget": check_imrad_word_budget,
             "imrad_blueprint_exists": check_imrad_blueprint_exists,
+            "stratification_provenance": check_table_stratification_provenance,
+            "vancouver_order": check_vancouver_reference_order,
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

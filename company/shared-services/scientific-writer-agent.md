@@ -458,6 +458,7 @@ Discussion: "The model showed moderate discrimination, with physical performance
 | "Studies have shown..." 泛泛引用 | 必须指名：谁、什么人群、什么方法、什么结果 |
 | 人名堆砌 | 连续 3+ 引用号无解释 = 堆砌 |
 | 引用未读文献 | 不引用 literature-matrix 之外的文献 |
+| 引用综述/系统综述/Meta-analysis 作为论据 | 综述是二次文献，不可作为论据。必须追溯到原始研究（一次文献）。Meta-analysis 例外：可作为效应量综合估计引用，但需标注为 secondary source |
 
 **自检清单**:
 - [ ] 每篇引用后面是否跟着 "跟我们比" 的关系说明？
@@ -935,6 +936,7 @@ Humanize 检查清单 (负向过滤: 删 AI 词)
 - [ ] 验证报告已保存到 `checklists/doi-verification.md`
 - [ ] **参考文献数量达标**: 论著 (Original Article) ≥25 篇, 综述 (Review) ≥45 篇
 - [ ] **每篇参考文献必须在正文中被至少引用一次**: References 中的每个 [n] 必须在正文中出现。禁止为满足 recency≥80% 而堆砌近期但无关的文献。写完全文后，交叉检查 References 列表与正文引用，确保 1:1 对应。
+- [ ] **参考文献必须是一次文献**: 综述 (review) 和系统综述 (systematic review) 是二次文献，不可作为论据引用。所有论据必须追溯到原始研究。Meta-analysis 例外：可作为效应量综合估计引用，但需标注为 secondary source。原始研究占比必须 ≥ 90%。
 - [ ] **引用数量上限**: 论著 ≤40 篇, 综述 ≤60 篇 (超过上限说明存在堆砌)
 - [ ] **经典文献标注**: >5年的文献: 已在 `company/reference/classic-papers.md` 注册表 → 自动豁免; 不在注册表 → 必须加 `[Classic — 领域: 具体理由]`, 模糊理由禁止
 

@@ -138,6 +138,9 @@ class PreflightScanner:
         # 6. 内存峰值预估
         self._estimate_peak_memory(all_scripts_data, project_dir, failures, warnings)
 
+        # 7. 数据真实性扫描 (2026-05-24)
+        self._check_data_authenticity(all_scripts_data, failures, warnings)
+
         # 构建报告
         report_lines = [f"Preflight Safety Scan — {len(scripts_to_scan)} 脚本"]
         report_lines.append("=" * 60)
@@ -473,6 +476,75 @@ class PreflightScanner:
                     pass
 
         return max(total_size, 10.0)  # 最少假设 10MB
+
+    # ================================================================
+    # 7. 数据真实性扫描 (2026-05-24)
+    # ================================================================
+    DATA_AUTHENTICITY_TARGETS = [
+        "generate_tables.py",
+        "generate_figures.py",
+    ]
+
+    def _check_data_authenticity(self, all_data: dict, failures: list, warnings: list):
+        """扫描 Phase 6 脚本是否存在 np.random 数据注入风险。
+
+        跨事业部通用: 检测 np.random 赋值给分层相关变量名
+        (efi/frail/strata/risk_score/grade/stage 等)。
+        """
+        import re
+
+        for script_name, script_data in all_data.items():
+            if script_name not in self.DATA_AUTHENTICITY_TARGETS:
+                continue
+
+            code = script_data["code"]
+            lines = code.split("\n")
+
+            for i, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+
+                # np.random assigned to variable with stratification keywords
+                m = re.match(
+                    r'(\w+)\s*=\s*np\.random\.(?!seed\b|RandomState\b)(\w+)\(',
+                    stripped
+                )
+                if m:
+                    var_name = m.group(1).lower()
+                    func = m.group(2)
+                    data_kw = r'(efi|frail|strata|stratum|group_label|risk_score|grade|stage|label|class|cluster|synthetic)'
+                    if re.search(data_kw, var_name):
+                        ctx = "\n".join(lines[max(0, i - 3):min(len(lines), i + 8)])
+                        if re.search(r'(Table|table|stratif|group.*by|patients?|cohort)', ctx):
+                            failures.append(
+                                f"{script_name}:L{i} np.random.{func}() -> '{var_name}' "
+                                f"used in stratification context — replace with real data from baseline"
+                            )
+
+                # simulate/synthetic keyword
+                if re.search(r'(simulate|synthetic).*?(data|score|strata|cohort|patient)',
+                             stripped, re.IGNORECASE):
+                    failures.append(
+                        f"{script_name}:L{i} simulated/synthetic data keyword: {stripped[:100]}"
+                    )
+
+            # Check data source declaration
+            if script_name == "generate_tables.py":
+                has_pkl = bool(re.search(r'(features_cache\.pkl|cache\[.?X.?\])', code))
+                if not has_pkl:
+                    warnings.append(
+                        f"{script_name}: no reference to features_cache.pkl — "
+                        f"stratification data source must be declared"
+                    )
+
+            if script_name == "generate_figures.py":
+                has_cv = bool(re.search(r'(cv_results\.json|CV_RESULTS)', code))
+                if not has_cv:
+                    warnings.append(
+                        f"{script_name}: no reference to cv_results.json — "
+                        f"figures must read from baseline"
+                    )
 
 
 # ================================================================

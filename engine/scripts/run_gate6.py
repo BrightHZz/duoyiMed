@@ -50,6 +50,8 @@ from engine.core.gate_checks import (
     check_humanize_quality,
     check_numerical_traceability,
     check_numerical_precision_consistency,
+    check_table_stratification_provenance,
+    check_vancouver_reference_order,
 )
 
 
@@ -90,6 +92,9 @@ GATE6_PYTHON_CHECKS = [
     # 🆕 数值一致性 + 基线合规 + 投稿层完整性
     ("numerical_traceability", check_numerical_traceability, "数值可追溯性 (偏差 <0.1%)"),
     ("precision_consistency", check_numerical_precision_consistency, "数值精度跨 manuscript/tables/figures 一致"),
+    # 🆕 数据真实性 + 结构规则 (2026-05-24)
+    ("stratification_provenance", check_table_stratification_provenance, "Table 1 分层数据来源验证 (非 np.random)"),
+    ("vancouver_order", check_vancouver_reference_order, "参考文献 Vancouver 编号顺序"),
 ]
 
 
