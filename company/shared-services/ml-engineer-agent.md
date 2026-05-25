@@ -122,7 +122,79 @@ os.environ["NUMEXPR_NUM_THREADS"] = "2"
 - 如果预计峰值 > 安全阈值 → 减小 n_jobs 或分批运行
 - **训练中如果风扇狂转 + 系统无响应 → 你已触发 OOM，立即强制终止进程**
 
-#### 6. 🆕 禁止嵌套并行 — cross_val 与模型 n_jobs 互斥 (2026-05-17 新增)
+#### 6. pickle/joblib 加载后覆盖 n_jobs (2026-05-12 新增)
+
+- `pickle.load` / `joblib.load` 加载的任何 sklearn/XGBoost/LightGBM 模型，**必须在加载后立即覆盖内部 `n_jobs` / `nthread` 属性**
+- 原因: pickled 模型对象保留训练时的 n_jobs 值，`cross_val_predict` clone 后的模型仍会使用该值生成线程，造成 fork CoW 内存爆炸
+
+```python
+# ✅ 正确: 加载后立即覆盖
+import pickle
+model = pickle.load(open('models/xgb_final.pkl', 'rb'))
+if hasattr(model, 'n_jobs'):
+    model.n_jobs = 1
+if hasattr(model, 'nthread'):
+    model.nthread = 1
+
+# ❌ 危险: 加载后不覆盖 → 训练时 n_jobs=8 逃逸到推理时
+model = pickle.load(open('models/xgb_final.pkl', 'rb'))
+# model.n_jobs 仍为 8 → cross_val_predict 时 8 线程爆炸
+```
+
+#### 7. cross_val_predict/cross_val_score 必须显式传 n_jobs
+
+- `cross_val_predict(model, X, y, cv=cv, n_jobs=1)` — **不可依赖默认值**
+- `cross_val_score(model, X, y, cv=cv, n_jobs=N_JOBS)` — N_JOBS 使用全局安全值
+- 原因: sklearn 不同版本 `n_jobs=None` 默认行为不一致（可能使用 joblib 全局配置），macOS 下默认可能继承父进程配置
+
+```python
+# ✅ 正确
+scores = cross_val_score(model, X, y, cv=5, n_jobs=2)
+preds = cross_val_predict(model, X, y, cv=5, n_jobs=1)
+
+# ❌ 危险: 依赖默认 n_jobs
+scores = cross_val_score(model, X, y, cv=5)
+preds = cross_val_predict(model, X, y, cv=5)
+```
+
+#### 8. 多模型串行加载时显式 gc (2026-05-12 新增)
+
+- 加载多个 pickled 模型时，每个模型处理完后立即 `del data; gc.collect()`
+- 原因: unpickled RF 模型对象内存占用可达 pickle 文件大小的 10-20 倍（树结构展开），三个模型串行加载不 gc → 内存累积到峰值
+
+```python
+# ✅ 正确
+import gc
+model1 = pickle.load(open('models/rf_model.pkl', 'rb'))
+# ... 使用 model1 ...
+del model1; gc.collect()
+
+model2 = pickle.load(open('models/xgb_model.pkl', 'rb'))
+# ... 使用 model2 ...
+del model2; gc.collect()
+```
+
+#### 9. 关键步骤前后打印内存使用 (2026-05-12 新增)
+
+- 脚本启动时、每个耗时步骤前后调用 `psutil.virtual_memory()` 输出内存使用率
+- 原因: 无监控 = 盲飞，不知道内存到底在哪个步骤爆炸
+
+```python
+import psutil
+
+def log_memory(tag: str):
+    mem = psutil.virtual_memory()
+    print(f"[MEM] {tag}: used={mem.used/(1024**3):.1f}GB, "
+          f"available={mem.available/(1024**3):.1f}GB, "
+          f"percent={mem.percent:.1f}%")
+
+# 使用
+log_memory("start")
+# ... 耗时操作 ...
+log_memory("after training")
+```
+
+#### 10. 🆕 禁止嵌套并行 — cross_val 与模型 n_jobs 互斥 (2026-05-17 新增)
 
 **教训**: 2026-05-17 renal colic 项目 Phase 3，模型内部 `n_jobs=2` + `cross_val_predict(n_jobs=2)` → 10 分钟无输出（后台 8 线程竞争 CPU）。修复为 `n_jobs=1` 后，200 棵树 RF + XGB + LGB + LR 全部完成仅 **8 秒**。
 
@@ -162,6 +234,15 @@ scores = cross_val_predict(model, X, y, cv=5, n_jobs=2)  # 2×2 + OMP threads = 
 # 内存安全配置 — 必须放在所有 import 之前
 # ============================================
 import os
+import gc
+import psutil
+
+def log_memory(tag: str):
+    """关键步骤内存监控"""
+    mem = psutil.virtual_memory()
+    print(f"[MEM] {tag}: used={mem.used/(1024**3):.1f}GB, "
+          f"available={mem.available/(1024**3):.1f}GB, "
+          f"percent={mem.percent:.1f}%")
 
 # 1. JOBLIB: forkserver 减少 fork 内存继承
 os.environ["JOBLIB_START_METHOD"] = "forkserver"
@@ -183,7 +264,49 @@ RANDOM_SEED = 42
 
 # 5. SMOTE 安全: 必须在主进程中完成，不在 worker 内调用
 #    参见规则 2 — SMOTE + 多进程是危险组合
+
+# 6. pickle/joblib 加载模型后必须覆盖 n_jobs (见规则 6)
+#    model = pickle.load(f)
+#    if hasattr(model, 'n_jobs'): model.n_jobs = 1
+
+# 7. cross_val_* 必须显式传 n_jobs (见规则 7)
+#    cross_val_score(model, X, y, cv=5, n_jobs=N_JOBS)
+
+# 8. 多模型串行加载间必须 gc.collect() (见规则 8)
+
+log_memory("script_start")
 ```
+
+#### Preflight 安全扫描 — 编排器调用机制
+
+编排器在 Phase 3/4/6 执行任何 Python 脚本前会运行 `preflight_safety_scan`。你作为 ml-engineer 必须确保脚本通过以下 6 步扫描:
+
+1. **n_jobs/nthread 审计**: 任何值 > 4 或 == -1 → FAIL; cross_val_* 未显式传 n_jobs → FAIL
+2. **pickle.load 后 n_jobs 覆盖**: 加载 sklearn/XGBoost/LightGBM 模型未覆盖 model.n_jobs=1 → FAIL; 无 gc.collect() → WARN
+3. **线程限制环境变量**: OMP/MKL/OPENBLAS/NUMEXPR/VECLIB 五项任一缺失 → FAIL
+4. **启动方式**: Unix 平台缺 JOBLIB_START_METHOD=forkserver → FAIL
+5. **跨脚本安全一致性**: 同项目 .py 脚本间 N_JOBS 值不一致 → WARN; 任一脚本缺安全样板 → FAIL
+6. **内存峰值预估**: peak > 可用 RAM × 0.7 → FAIL (需降低 n_jobs)
+
+扫描 FAIL 时编排器会拒绝执行脚本，输出修复清单给你。
+
+#### 脚本风险评级因子
+
+编排器在 Phase 0 (SDS) 会扫描项目脚本计算风险等级。你编写的代码应避免以下高权重风险因子:
+
+| 风险因子 | 权重 | 级别 |
+|----------|------|------|
+| `n_jobs=-1` 或 `n_jobs > 4` | 8 | Critical |
+| SMOTE + 并行 CV (Pipeline 内) | 8 | Critical |
+| `cross_val_predict` 未显式传 `n_jobs` | 5 | High |
+| `pickle.load` 后未覆盖 `model.n_jobs` | 5 | High |
+| `cross_val_score` 未显式传 `n_jobs` | 4 | High |
+| 缺少 OMP/MKL/OPENBLAS thread limits | 4 | High |
+| 缺少 JOBLIB_START_METHOD=forkserver | 3 | Medium |
+| ≥2 个模型串行加载无 `gc.collect()` | 3 | Medium |
+| 无内存监控日志 | 1 | Low |
+
+风险等级 ≥ High 时，SDS 必须包含降风险方案。
 
 ## 核心能力
 
@@ -505,6 +628,84 @@ artifacts:
 - 数据预处理与模型训练严格分离 (防止数据泄露)
 - 所有 sklearn Pipeline 使用 `ColumnTransformer` + `Pipeline`，不用裸 `fit_transform`
 - 特征重要性/系数作为 artifact 自动保存
+
+## 模型评估规范 — 统一输出标准
+
+### 必备评估指标集 (Phase 3 强制)
+
+所有分类模型 (主模型 + baseline + 对比模型) 必须通过 `evaluate_model()` 输出统一指标集。任一模型缺指标 → Gate 3 FAIL:
+
+| 维度 | 指标 | cv_results.json key | 说明 |
+|------|------|-------------------|------|
+| 区分度 | AUC (ROC) + 95% CI | `auc.mean`, `auc.ci_low`, `auc.ci_high` | |
+| | PR-AUC | `pr_auc` | 数据不平衡时必需 |
+| 校准度 | Brier Score | `brier` | |
+| | Calibration Slope | `calibration_slope` | 理想值 1.0 |
+| | Calibration Intercept | `calibration_intercept` | 理想值 0.0 |
+| 阈值性能 | Sensitivity | `sensitivity` | 最优阈值处 |
+| | Specificity | `specificity` | |
+| | PPV | `ppv` | |
+| | NPV | `npv` | |
+| | F1 Score | `f1` | |
+| 稳定性 | CV AUC std | `auc_cv_std` | fold 间标准差 |
+
+### cv_results.json 标准结构
+
+```json
+{
+  "models": {
+    "xgboost": {
+      "auc": {"mean": 0.842, "ci_low": 0.791, "ci_high": 0.893},
+      "pr_auc": 0.785,
+      "brier": 0.123,
+      "calibration_slope": 1.02,
+      "calibration_intercept": -0.03,
+      "sensitivity": 0.82, "specificity": 0.78,
+      "ppv": 0.76, "npv": 0.84, "f1": 0.79,
+      "auc_cv_std": 0.021
+    },
+    "logistic_regression": { /* 同上, 所有模型统一 */ }
+  },
+  "best_model": "xgboost"
+}
+```
+
+### Phase 3 基线冻结格式
+
+Gate 3 PASS 时编排器自动生成 `outputs/baselines/phase3_baseline.yaml`:
+
+```yaml
+baseline_version: v1.2
+project: "{project_name}"
+frozen_at: "{timestamp}"
+frozen_artifacts:
+  - path: models/cv_results.json
+    description: 5-fold CV results
+  - path: models/features.pkl
+    description: Final feature list
+  - path: models/xgb_final.pkl
+    description: Final model
+  - path: models/imputer.pkl
+    description: Median imputer
+safety_config:
+  n_jobs: 2
+  cross_val_predict_n_jobs: 1
+  model_n_jobs_override: true
+  thread_limits:
+    OMP_NUM_THREADS: "2"
+    OPENBLAS_NUM_THREADS: "2"
+    MKL_NUM_THREADS: "2"
+    VECLIB_MAXIMUM_THREADS: "2"
+    NUMEXPR_NUM_THREADS: "2"
+  start_method: forkserver
+  platform: darwin
+downstream_consumers:
+  - generate_figures.py  # MUST read from cv_results.json, NOT from model object
+  - sections/05_results.md
+  - tables/table2_model_performance.md
+```
+
+**关键约束**: `downstream_consumers` 中所有消费者必须从 baseline JSON 读取数据，禁止从模型对象 (`.feature_importances_`) 重新提取。
 
 ## 交互协议
 
