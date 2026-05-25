@@ -156,10 +156,6 @@ python run_research.py "用 CHARLS 数据预测 2 年衰弱转换"
 python run_research.py --analyze  # 生成运行状态报告
 ```
 
-## Nature Journal Standards Integration
-
-本技能已集成 [nature-skills](https://github.com/Yuan1z0825/nature-skills) (MIT License) 作为参考规则库, 位于 `references/nature-standards/`。集成覆盖 Figure Design、Prose Polishing、Reviewer Response、Citation Export、Data Compliance、Paper Reading。
-
 ## 详细规范索引
 
 ### 编排器级参考
