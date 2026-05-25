@@ -405,30 +405,101 @@ def check_tables_exist(outputs: dict, orch) -> tuple:
 
 
 def check_figures_exist(outputs: dict, orch) -> tuple:
-    """检查 figures/ 目录下是否有至少 4 张图表 (ROC/校准/SHAP/DCA)"""
+    """检查 figures/ 目录下是否有充足的图表 + caption↔image 双向匹配 + 正文引用。
+
+    钱学森模块一+二 (2026-05-24 升级):
+      旧逻辑: len(image_files) >= 3 → PASS (盲计数)
+      新逻辑: 计数 + 编号连续性 + caption↔image 双向匹配 + 正文引用验证
+
+    若有 cohort_attrition.json → 预期最少 4 张 (含 Figure 1)。
+    """
     import os
+    import re
     from pathlib import Path
     project_id = getattr(orch, '_current_project_id', None)
     if not project_id:
         return True, "跳过 (无 project_id)"
 
+    has_cohort = False
+    proj_dir = None
+
     if hasattr(orch, 'kb') and orch.kb:
         for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
             proj_dir = Path(vault_path) / 'projects' / project_id
-            # figures/ 是零件工作目录
             for figures_rel in ['figures']:
                 figures_dir = proj_dir / figures_rel
                 if figures_dir.exists():
+                    # Check cohort attrition
+                    cohort_file = proj_dir / 'cohort_attrition.json'
+                    has_cohort = cohort_file.exists()
+
                     image_files = list(figures_dir.glob('*.png')) + list(figures_dir.glob('*.jpg'))
                     caption_files = list(figures_dir.glob('*caption*.md'))
-                    total_visual = len(image_files) + len([f for f in caption_files if 'fig' in f.name.lower()])
-                    if len(image_files) >= 3:
-                        return True, f"{figures_rel}/ 目录存在, 含 {len(image_files)} 张图片 + {len(caption_files)} 个图注"
-                    elif total_visual >= 4:
-                        return True, f"{figures_rel}/ 目录存在, 含 {total_visual} 个视觉元素"
-                    else:
-                        return False, f"{figures_rel}/ 目录内容不足 (仅 {len(image_files)} 图片, 需 ≥3: ROC/校准/SHAP/DCA)"
-    return False, "未找到项目的 figures/ 目录, Phase 6 必须产出至少 4 张图表"
+
+                    min_expected = 4 if has_cohort else 3
+
+                    if len(image_files) < min_expected:
+                        return False, (
+                            f"{figures_rel}/ 图片数量不足 (仅 {len(image_files)} 张, "
+                            f"需 ≥{min_expected}): Figure 1 (cohort flow) + Figure 2-4 (ROC/Calib/Importance)"
+                            if has_cohort else
+                            f"{figures_rel}/ 图片数量不足 (仅 {len(image_files)} 张, 需 ≥3: ROC/校准/特征重要性)"
+                        )
+
+                    # Caption ↔ image bidirectional check
+                    image_basenames = {f.stem for f in image_files
+                                       if re.match(r'Figure\d+_', f.name)}
+                    caption_basenames = set()
+                    for cf in caption_files:
+                        m = re.match(r'(Figure\d+_[a-zA-Z0-9-]+)_caption', cf.stem)
+                        if m:
+                            caption_basenames.add(m.group(1))
+
+                    caption_without_image = caption_basenames - image_basenames
+                    image_without_caption = image_basenames - caption_basenames
+
+                    issues = []
+                    if caption_without_image:
+                        issues.append(
+                            f"Caption 无对应图像: {sorted(caption_without_image)[:3]}"
+                        )
+                    if image_without_caption:
+                        issues.append(
+                            f"图像无对应 caption: {sorted(image_without_caption)[:3]}"
+                        )
+
+                    if issues:
+                        return False, (
+                            f"{figures_rel}/ caption↔image 不匹配: {'; '.join(issues)}"
+                        )
+
+                    # Text citation check: each figure referenced in manuscript
+                    manuscript_path = proj_dir / 'submission' / 'manuscript.md'
+                    if manuscript_path.exists():
+                        manuscript = manuscript_path.read_text(encoding='utf-8')
+                        figure_nums_in_fs = set()
+                        for fname in image_files:
+                            m = re.match(r'Figure(\d+)_', fname.name)
+                            if m:
+                                figure_nums_in_fs.add(int(m.group(1)))
+
+                        uncited = []
+                        for n in sorted(figure_nums_in_fs):
+                            if not re.search(rf'Figure\s+{n}\b', manuscript):
+                                uncited.append(str(n))
+                        if uncited:
+                            return False, (
+                                f"Figure {', '.join(uncited)} 未被正文引用 "
+                                f"(文件存在但 manuscript 中未找到 'Figure N' 引用)"
+                            )
+
+                    return True, (
+                        f"{figures_rel}/ 存在, {len(image_files)} 张图片 "
+                        f"+ {len(caption_files)} 个图注, "
+                        f"caption↔image 双向匹配 ✓ "
+                        + (f"(含 Figure 1)" if has_cohort else "")
+                    )
+    return False, "未找到项目的 figures/ 目录"
 
 
 def check_manuscript_assembled(outputs: dict, orch) -> tuple:
@@ -4051,6 +4122,157 @@ def check_lesson_rules_compliance(outputs: dict, orch) -> tuple:
 
 
 # ============================================================
+# Phase 6: Figure numbering continuity (2026-05-24)
+# ============================================================
+def check_figure_numbering_continuity(outputs: dict, orch) -> tuple:
+    """Figure 编号连续性检查 — 验证 Figure 1 存在且编号连续。
+
+    钱学森模块一+二: 内容完整性传感器 — 图数量 >= 3 不能保证 Figure 1 存在。
+    若有 cohort_attrition.json → Figure 1 强制存在。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    figures_dir = proj_dir / 'figures'
+    if not figures_dir.exists():
+        return True, "跳过 (figures/ 目录不存在)"
+
+    png_files = list(figures_dir.glob('*.png'))
+    if not png_files:
+        return True, "跳过 (figures/ 下无 .png 文件)"
+
+    # Extract figure numbers: Figure[N]_*.png
+    figure_nums = set()
+    for f in png_files:
+        m = re.match(r'Figure(\d+)_', f.name)
+        if m:
+            figure_nums.add(int(m.group(1)))
+
+    if not figure_nums:
+        return True, "跳过 (不符合 Figure[N]_ 命名规范)"
+
+    sorted_nums = sorted(figure_nums)
+    expected_start = 1
+
+    # Check: cohort_attrition.json exists → Figure 1 mandatory
+    cohort_file = proj_dir / 'cohort_attrition.json'
+    if cohort_file.exists() and 1 not in figure_nums:
+        return False, (
+            "Figure 1 (cohort attrition flowchart) 缺失 — "
+            "cohort_attrition.json 存在但 figures/ 下无 Figure1_*.png"
+        )
+
+    # Check numbering continuity
+    expected = list(range(sorted_nums[0], sorted_nums[-1] + 1))
+    missing = set(expected) - figure_nums
+    if missing:
+        return False, (
+            f"Figure 编号不连续: 现有 {sorted_nums}, 缺失 {sorted(missing)}"
+        )
+
+    return True, f"Figure 编号连续: Figure {sorted_nums[0]}–{sorted_nums[-1]} ({len(sorted_nums)} 张)"
+
+
+# ============================================================
+# Phase 6: Table 1 content completeness (2026-05-24)
+# ============================================================
+def check_table1_content_completeness(outputs: dict, orch) -> tuple:
+    """Table 1 内容完整性检查 — 扫描占位符占比。
+
+    钱学森模块一+二: 内容填充率传感器。
+    单元格为 '—' / '\\u2014' / 'N/A' / 空字符串 → 计入缺失。
+    fill_rate < 80% → FAIL, fill_rate < 100% → COND_PASS。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Try .md first, then .csv
+    table1_md = proj_dir / 'tables' / 'Table1_baseline.md'
+    if not table1_md.exists():
+        return True, "跳过 (tables/Table1_baseline.md 不存在)"
+
+    content = table1_md.read_text(encoding='utf-8')
+
+    # Parse markdown table rows (skip header and separator)
+    lines = content.split('\n')
+    data_rows = []
+    in_table = False
+    for line in lines:
+        line = line.strip()
+        if line.startswith('|') and '---' not in line:
+            if 'Characteristic' in line:
+                in_table = True
+                continue
+            if in_table:
+                data_rows.append(line)
+
+    if not data_rows:
+        return True, "跳过 (Table 1 无数据行)"
+
+    # Count placeholder cells
+    placeholder_pattern = re.compile(
+        r'^\s*(—|—|N/?A|[—―])\s*$'
+    )
+    total_cells = 0
+    empty_cells = 0
+    empty_details = []
+
+    for row in data_rows:
+        cells = [c.strip() for c in row.split('|')]
+        # Filter out leading/trailing empty strings from split
+        cells = [c for c in cells if c]
+        # Summary row detection: rows where col0 is just "N" have no p-value by design
+        is_summary_row = (len(cells) > 0 and cells[0].strip() == 'N')
+        for i, cell in enumerate(cells):
+            # Skip p-value column (last column) for summary row
+            if is_summary_row and i == len(cells) - 1:
+                continue
+            total_cells += 1
+            if placeholder_pattern.match(cell) or cell == '':
+                empty_cells += 1
+                # Find the characteristic name (first column)
+                if i > 0 and cells[0]:
+                    empty_details.append(cells[0][:40])
+
+    if total_cells == 0:
+        return True, "跳过 (Table 1 无可解析单元格)"
+
+    fill_rate = 1.0 - empty_cells / total_cells
+
+    if fill_rate < 0.80:
+        return False, (
+            f"Table 1 内容填充率 {fill_rate:.0%} < 80% "
+            f"({empty_cells}/{total_cells} cells empty). "
+            f"空单元格变量: {', '.join(empty_details[:8])}"
+        )
+
+    if fill_rate < 1.0:
+        return False, (
+            f"Table 1 内容填充率 {fill_rate:.0%} ({empty_cells}/{total_cells} cells empty). "
+            f"空单元格: {', '.join(empty_details[:5])}. "
+            f"若变量确实不可用，需在 Methods 中说明"
+        )
+
+    return True, f"Table 1 内容填充率 100% ({total_cells} 个单元格全部有值)"
+
+
+# ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
 
@@ -4174,6 +4396,8 @@ GATE_DEFINITIONS = {
             "stratification_provenance": check_table_stratification_provenance,
             "vancouver_order": check_vancouver_reference_order,
             "lesson_rules": check_lesson_rules_compliance,  # 🆕 经验规则传播 (B环 #10)
+            "figure_numbering_continuity": check_figure_numbering_continuity,    # 2026-05-24: Figure 1 存在 + 编号连续
+            "table1_content_completeness": check_table1_content_completeness,    # 2026-05-24: Table 1 占位符扫描
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

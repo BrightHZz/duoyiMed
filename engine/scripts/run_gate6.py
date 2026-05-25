@@ -53,6 +53,8 @@ from engine.core.gate_checks import (
     check_numerical_precision_consistency,
     check_table_stratification_provenance,
     check_vancouver_reference_order,
+    check_figure_numbering_continuity,
+    check_table1_content_completeness,
 )
 
 
@@ -97,6 +99,8 @@ GATE6_PYTHON_CHECKS = [
     # 🆕 数据真实性 + 结构规则 (2026-05-24)
     ("stratification_provenance", check_table_stratification_provenance, "Table 1 分层数据来源验证 (非 np.random)"),
     ("vancouver_order", check_vancouver_reference_order, "参考文献 Vancouver 编号顺序"),
+    ("figure_numbering_continuity", check_figure_numbering_continuity, "Figure 编号连续性 (Figure 1 存在 + 无跳号)"),
+    ("table1_content_completeness", check_table1_content_completeness, "Table 1 内容完整性 (占位符 ≤ 20%)"),
 ]
 
 
