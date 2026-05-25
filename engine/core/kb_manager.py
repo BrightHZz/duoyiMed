@@ -10,14 +10,17 @@ from typing import Optional, Any
 class KnowledgeBaseManager:
     """管理 Obsidian vault 中的知识库文件的读写 — 支持多事业部多知识库"""
 
-    def __init__(self, vault_path: Path, vaults: dict = None):
+    def __init__(self, vault_path: Path, vaults: dict = None,
+                 outputs_dir: Path = None):
         """
         Args:
             vault_path: 默认/主知识库路径
             vaults: 各事业部的知识库路径 dict, e.g. {"geriatrics": Path, "urology": Path}
+            outputs_dir: 项目输出根目录 (outputs/projects/), 用于跨项目学习
         """
         self.vault = vault_path
         self.vaults = vaults or {}
+        self.outputs_dir = outputs_dir
         self._ensure_dirs()
 
     def get_vault(self, division: str = None) -> Path:
@@ -31,6 +34,24 @@ class KnowledgeBaseManager:
         for vault_path in [self.vault] + list(self.vaults.values()):
             for d in std_dirs:
                 (vault_path / d).mkdir(parents=True, exist_ok=True)
+
+    def _get_all_project_dirs(self) -> list[Path]:
+        """获取所有项目目录 (vault 项目 + outputs 项目)。"""
+        dirs = []
+        # 1. Vault 中的项目
+        for vault in [self.vault] + list(self.vaults.values()):
+            proj_dir = vault / "projects"
+            if proj_dir.exists():
+                for d in proj_dir.iterdir():
+                    if d.is_dir() and not d.name.startswith("_"):
+                        dirs.append(d)
+        # 2. outputs/projects/ 中的项目运行输出
+        if self.outputs_dir and self.outputs_dir.exists():
+            for d in self.outputs_dir.iterdir():
+                if d.is_dir() and not d.name.startswith("_"):
+                    if d not in dirs:
+                        dirs.append(d)
+        return dirs
 
     # ================================================================
     # YAML Frontmatter 解析
@@ -366,73 +387,62 @@ class KnowledgeBaseManager:
         agent_stats = defaultdict(lambda: {"total": 0, "success": 0, "degraded": 0})
         gate_stats = defaultdict(lambda: {"pass": 0, "cond_pass": 0, "fail": 0, "total": 0})
 
-        vaults_to_search = [self.vault] + list(self.vaults.values())
-        for vault in vaults_to_search:
-            proj_dir = vault / "projects"
-            if not proj_dir.exists():
-                continue
+        for project_path in self._get_all_project_dirs():
+            # 读取项目状态
+            state_path = project_path / "project_state.json"
+            proj_info = {"id": project_path.name, "phases": []}
+            if state_path.exists():
+                try:
+                    state = _json.loads(state_path.read_text(encoding="utf-8"))
+                    proj_info["division"] = state.get("division", "")
+                    proj_info["request"] = state.get("user_request", "")[:120]
+                    proj_info["status"] = state.get("status", "")
+                except Exception:
+                    pass
 
-            for project_path in proj_dir.iterdir():
-                if not project_path.is_dir() or project_path.name.startswith("_"):
-                    continue
+            # 读取 gate reports
+            for gr_path in sorted(project_path.glob("gate_report_phase*.json")):
+                try:
+                    gr = _json.loads(gr_path.read_text(encoding="utf-8"))
+                    auto_checks = gr.get("auto_checks", [])
+                    fail_count = sum(1 for c in auto_checks if c.get("result") == "fail")
+                    phase_id = gr.get("phase_id", gr_path.stem.replace("gate_report_", ""))
+                    gate_stats[phase_id]["total"] += 1
+                    if fail_count == 0:
+                        gate_stats[phase_id]["pass"] += 1
+                    else:
+                        gate_stats[phase_id]["fail"] += 1
+                except Exception:
+                    pass
 
-                # 读取项目状态
-                state_path = project_path / "project_state.json"
-                proj_info = {"id": project_path.name, "phases": []}
-                if state_path.exists():
+            # 读取 run logs
+            run_logs_dir = project_path / "run_logs"
+            if run_logs_dir.exists():
+                for log_file in run_logs_dir.glob("*.jsonl"):
                     try:
-                        state = _json.loads(state_path.read_text(encoding="utf-8"))
-                        proj_info["division"] = state.get("division", "")
-                        proj_info["request"] = state.get("user_request", "")[:120]
-                        proj_info["status"] = state.get("status", "")
+                        for line in log_file.read_text(encoding="utf-8").splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            rec = _json.loads(line)
+                            agent = rec.get("agent_id", "")
+                            if agent.startswith("_"):
+                                continue
+
+                            agent_stats[agent]["total"] += 1
+                            if rec.get("success"):
+                                agent_stats[agent]["success"] += 1
+                            if rec.get("degraded"):
+                                agent_stats[agent]["degraded"] += 1
+
+                            phase_id = rec.get("phase_id", "")
+                            wt = rec.get("wall_time_sec", 0)
+                            if phase_id and wt > 0:
+                                phase_times[phase_id].append(wt)
                     except Exception:
                         pass
 
-                # 读取 gate reports
-                for gr_path in sorted(project_path.glob("gate_report_phase*.json")):
-                    try:
-                        gr = _json.loads(gr_path.read_text(encoding="utf-8"))
-                        gs = gr.get("status", "")
-                        # gate_report 格式不同于 _check_gate result, 尝试解析
-                        auto_checks = gr.get("auto_checks", [])
-                        fail_count = sum(1 for c in auto_checks if c.get("result") == "fail")
-                        phase_id = gr.get("phase_id", gr_path.stem.replace("gate_report_", ""))
-                        gate_stats[phase_id]["total"] += 1
-                        if fail_count == 0:
-                            gate_stats[phase_id]["pass"] += 1
-                        else:
-                            gate_stats[phase_id]["fail"] += 1
-                    except Exception:
-                        pass
-
-                # 读取 run logs
-                run_logs_dir = project_path / "run_logs"
-                if run_logs_dir.exists():
-                    for log_file in run_logs_dir.glob("*.jsonl"):
-                        try:
-                            for line in log_file.read_text(encoding="utf-8").splitlines():
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                rec = _json.loads(line)
-                                agent = rec.get("agent_id", "")
-                                if agent.startswith("_"):
-                                    continue
-
-                                agent_stats[agent]["total"] += 1
-                                if rec.get("success"):
-                                    agent_stats[agent]["success"] += 1
-                                if rec.get("degraded"):
-                                    agent_stats[agent]["degraded"] += 1
-
-                                phase_id = rec.get("phase_id", "")
-                                wt = rec.get("wall_time_sec", 0)
-                                if phase_id and wt > 0:
-                                    phase_times[phase_id].append(wt)
-                        except Exception:
-                            pass
-
-                projects.append(proj_info)
+            projects.append(proj_info)
 
         # 聚合 phase 统计
         phase_summary = {}

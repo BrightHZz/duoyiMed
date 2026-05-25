@@ -499,7 +499,10 @@ if __name__ == "__main__":
         if args.vault:
             from pathlib import Path as _Path
             from engine.core.kb_manager import KnowledgeBaseManager
-            kb = KnowledgeBaseManager(vault_path=_Path(args.vault))
+            kb = KnowledgeBaseManager(
+                vault_path=_Path(args.vault),
+                outputs_dir=_Path(args.log_dir) if args.log_dir else None,
+            )
         report = analyzer.generate_full_report(kb_manager=kb)
         if args.output:
             Path(args.output).write_text(report)
