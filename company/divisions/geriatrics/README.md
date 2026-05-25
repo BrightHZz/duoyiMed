@@ -30,6 +30,22 @@
 | Tier 2 | 5-15 | GeroScience, Aging Cell, JAGS, J Gerontol A |
 | Tier 3 | 3-5 | BMC Geriatrics, Frontiers in Aging, JAMDA |
 
+## 路由关键词
+
+编排器根据用户输入中的关键词自动路由到本事业部:
+
+- 衰弱, frailty, fried, frail scale
+- 肌少症, sarcopenia, AWGS, 骨骼肌
+- 跌倒, fall, 步速, gait, 平衡
+- 认知, cognition, dementia, MMSE, MoCA, 认知障碍
+- 老年, aging, elderly, geriatric, 老龄化
+- 多病共存, multimorbidity, comorbidity
+- 衰老时钟, epigenetic clock, biological age
+- CHARLS, CLHLS, HRS, ELSA, UK Biobank (老年队列语境)
+- 多重用药, polypharmacy, Beers criteria
+
+默认事业部: 当用户输入无法匹配 urology 或 pediatrics 时, 默认路由到 geriatrics。
+
 ## 知识库
 
 Obsidian Vault: `{OBSIDIAN_HOME}/laoNianYiXue/`

@@ -30,6 +30,20 @@
 | Tier 2 | 5-10 | Pediatrics, The Journal of Pediatrics, Archives of Disease in Childhood, Pediatric Critical Care Medicine |
 | Tier 3 | 2-5 | European Journal of Pediatrics, BMC Pediatrics, Frontiers in Pediatrics |
 
+## 路由关键词
+
+编排器根据用户输入中的关键词自动路由到本事业部:
+
+- 儿科, 儿童, 小儿, 新生儿, 婴幼儿, infant, child, pediatric
+- PICU, NICU, 儿童重症, pediatric intensive care
+- 早产儿, preterm, premature, neonatal
+- PIC (浙江大学医学院附属儿童医院 PICU/NICU/CCU 数据库)
+- 生长发育, growth, development, 儿童保健
+- 先天性疾病, congenital, 出生缺陷
+- 川崎病, Kawasaki, 手足口病, HFMD
+- 儿童肺炎, pediatric pneumonia, 儿童哮喘, pediatric asthma
+- 儿童感染, pediatric infection
+
 ## 知识库
 
 Obsidian Vault: `{OBSIDIAN_HOME}/erKe/`

@@ -31,6 +31,19 @@
 | Tier 2 | 5-10 | Journal of Urology, BJU International, Prostate Cancer and Prostatic Diseases, World Journal of Urology |
 | Tier 3 | 2-5 | Urology, International Urology and Nephrology, BMC Urology |
 
+## 路由关键词
+
+编排器根据用户输入中的关键词自动路由到本事业部:
+
+- 肾结石, 尿石症, 输尿管结石, 膀胱结石, 肾结石复发
+- kidney stone, urolithiasis, stone recurrence
+- 前列腺, 前列腺增生, 前列腺癌, PSA, BPH, prostat*, TURP
+- 膀胱癌, 膀胱肿瘤, NMIBC, MIBC, bladder cancer, cystectomy
+- 泌尿, 尿道, 尿路, urology, urological
+- 尿路感染, UTI, 肾盂肾炎, pyelonephritis, 尿脓毒症
+- 肾上腺, 肾癌, 睾丸癌, 阴茎癌
+- MIMIC-IV, SEER
+
 ## 知识库
 
 Obsidian Vault: `{OBSIDIAN_HOME}/miNiaoWaiKe/`
