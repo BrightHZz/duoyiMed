@@ -3989,6 +3989,67 @@ def check_vancouver_reference_order(outputs: dict, orch) -> tuple:
     return True, f"{len(seen)} refs in Vancouver order, 1..{max_ref} sequential"
 
 
+def check_lesson_rules_compliance(outputs: dict, orch) -> tuple:
+    """知识管理部 B环 #10: 扫描所有历史项目的 lessons-learned 经验规则,
+    与当前项目脚本 diff, 发现违反项则阻断。
+
+    此检查确保"一个项目发现的代码安全问题, 不会在下一个项目中重复"。
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    kb = getattr(orch, 'kb', None)
+    if not kb:
+        return True, "跳过 (知识库管理器未初始化)"
+
+    # 1. 扫描所有项目的经验规则
+    try:
+        rules = kb.scan_lessons_learned()
+    except Exception as e:
+        return True, f"跳过 (经验规则扫描异常: {e})"
+
+    if not rules:
+        return True, "无历史经验规则需要检查"
+
+    # 2. 将规则与当前项目脚本 diff
+    try:
+        violations = kb.diff_rules_against_scripts(rules, proj_dir)
+    except Exception as e:
+        return True, f"跳过 (规则 diff 异常: {e})"
+
+    if not violations:
+        return True, f"经验规则检查通过 ({len(rules)} 条规则, 0 违反)"
+
+    # 3. 按 severity 分组报告
+    criticals = [v for v in violations if v["severity"] == "critical"]
+    highs = [v for v in violations if v["severity"] == "high"]
+
+    detail_parts = [f"违反 {len(violations)} 条经验规则 "
+                    f"(critical: {len(criticals)}, high: {len(highs)})"]
+
+    for v in violations[:5]:  # 列前 5 条
+        detail_parts.append(
+            f"[{v['rule_id']}] {v['file']}:{v['line']} — {v['match'][:60]}"
+        )
+        if v.get("fix"):
+            detail_parts.append(f"  → Fix: {v['fix']}")
+
+    detail = "\n  ".join(detail_parts)
+
+    # critical 违反 → 直接 FAIL
+    if criticals:
+        return False, detail
+
+    return False, detail
+
+
 # ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
@@ -4029,6 +4090,7 @@ GATE_DEFINITIONS = {
             "n_jobs_safe": check_n_jobs_safe,
             "calibration_trend": check_calibration_trend,  # 🆕 Δ-Gate: 校准度趋势
             "all_models_evaluated": check_all_models_evaluated_completely,  # 🆕 所有模型指标完整
+            "lesson_rules": check_lesson_rules_compliance,  # 🆕 经验规则传播 (B环 #10)
         },
         "llm_checks": [
             "模型选择层级是否合理 (baseline → 复杂模型)?",
@@ -4111,6 +4173,7 @@ GATE_DEFINITIONS = {
             "imrad_blueprint_exists": check_imrad_blueprint_exists,
             "stratification_provenance": check_table_stratification_provenance,
             "vancouver_order": check_vancouver_reference_order,
+            "lesson_rules": check_lesson_rules_compliance,  # 🆕 经验规则传播 (B环 #10)
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",
