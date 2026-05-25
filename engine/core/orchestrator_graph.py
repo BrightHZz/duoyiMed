@@ -886,6 +886,26 @@ class ResearchOrchestrator:
                 )
             lines.append("")
 
+        # 🆕 知识管理部: 注入相似项目参考 (Phase 2 — 跨项目学习)
+        if hasattr(self, 'kb') and self.kb:
+            try:
+                similar = self.kb.find_similar_projects(
+                    division=self.active_division,
+                    n=3,
+                )
+                if similar:
+                    lines.append("### 🗂 最相似的历史项目 (知识管理部)")
+                    lines.append("| 项目 ID | 事业部 | 状态 | 研究主题 |")
+                    lines.append("|---------|--------|------|----------|")
+                    for s in similar:
+                        lines.append(
+                            f"| {s['id']} | {s['division']} | {s['status'][:12]} | "
+                            f"{s['request'][:80]} |"
+                        )
+                    lines.append("")
+            except Exception:
+                pass
+
         lines.append("---")
         return "\n".join(lines)
 

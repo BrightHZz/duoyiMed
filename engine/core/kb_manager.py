@@ -340,3 +340,390 @@ class KnowledgeBaseManager:
         violations.sort(key=lambda x: severity_order.get(x["severity"], 5))
 
         return violations
+
+    # ================================================================
+    # 跨项目学习引擎 (知识管理部 — 系统辨识模块数据源)
+    # ================================================================
+
+    def aggregate_run_statistics(self) -> dict:
+        """跨所有项目聚合运行统计。
+
+        扫描所有 vault 的 projects/ 目录, 读取 run_logs/*.jsonl 和
+        gate_report_phase*.json, 聚合为系统辨识模块所需的数据。
+
+        Returns:
+            {"projects": int, "total_calls": int,
+             "phase_stats": {phase_id: {"count": int, "avg_sec": float, ...}},
+             "agent_stats": {agent_id: {"count": int, "success_rate": float, ...}},
+             "gate_stats": {phase_id: {"pass_rate": float, "fail_count": int, ...}},
+             "bottlenecks": [...]}
+        """
+        import json as _json
+        from collections import defaultdict
+
+        projects = []
+        phase_times = defaultdict(list)
+        agent_stats = defaultdict(lambda: {"total": 0, "success": 0, "degraded": 0})
+        gate_stats = defaultdict(lambda: {"pass": 0, "cond_pass": 0, "fail": 0, "total": 0})
+
+        vaults_to_search = [self.vault] + list(self.vaults.values())
+        for vault in vaults_to_search:
+            proj_dir = vault / "projects"
+            if not proj_dir.exists():
+                continue
+
+            for project_path in proj_dir.iterdir():
+                if not project_path.is_dir() or project_path.name.startswith("_"):
+                    continue
+
+                # 读取项目状态
+                state_path = project_path / "project_state.json"
+                proj_info = {"id": project_path.name, "phases": []}
+                if state_path.exists():
+                    try:
+                        state = _json.loads(state_path.read_text(encoding="utf-8"))
+                        proj_info["division"] = state.get("division", "")
+                        proj_info["request"] = state.get("user_request", "")[:120]
+                        proj_info["status"] = state.get("status", "")
+                    except Exception:
+                        pass
+
+                # 读取 gate reports
+                for gr_path in sorted(project_path.glob("gate_report_phase*.json")):
+                    try:
+                        gr = _json.loads(gr_path.read_text(encoding="utf-8"))
+                        gs = gr.get("status", "")
+                        # gate_report 格式不同于 _check_gate result, 尝试解析
+                        auto_checks = gr.get("auto_checks", [])
+                        fail_count = sum(1 for c in auto_checks if c.get("result") == "fail")
+                        phase_id = gr.get("phase_id", gr_path.stem.replace("gate_report_", ""))
+                        gate_stats[phase_id]["total"] += 1
+                        if fail_count == 0:
+                            gate_stats[phase_id]["pass"] += 1
+                        else:
+                            gate_stats[phase_id]["fail"] += 1
+                    except Exception:
+                        pass
+
+                # 读取 run logs
+                run_logs_dir = project_path / "run_logs"
+                if run_logs_dir.exists():
+                    for log_file in run_logs_dir.glob("*.jsonl"):
+                        try:
+                            for line in log_file.read_text(encoding="utf-8").splitlines():
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                rec = _json.loads(line)
+                                agent = rec.get("agent_id", "")
+                                if agent.startswith("_"):
+                                    continue
+
+                                agent_stats[agent]["total"] += 1
+                                if rec.get("success"):
+                                    agent_stats[agent]["success"] += 1
+                                if rec.get("degraded"):
+                                    agent_stats[agent]["degraded"] += 1
+
+                                phase_id = rec.get("phase_id", "")
+                                wt = rec.get("wall_time_sec", 0)
+                                if phase_id and wt > 0:
+                                    phase_times[phase_id].append(wt)
+                        except Exception:
+                            pass
+
+                projects.append(proj_info)
+
+        # 聚合 phase 统计
+        phase_summary = {}
+        for pid, times in phase_times.items():
+            if not times:
+                continue
+            phase_summary[pid] = {
+                "count": len(times),
+                "avg_sec": round(sum(times) / len(times), 1),
+                "p50_sec": round(sorted(times)[len(times) // 2], 1),
+                "total_sec": round(sum(times), 1),
+            }
+
+        # 聚合 agent 统计
+        agent_summary = {}
+        for aid, data in agent_stats.items():
+            total = data["total"]
+            agent_summary[aid] = {
+                "count": total,
+                "success_rate": round(data["success"] / total * 100) if total else 0,
+                "degraded_rate": round(data["degraded"] / total * 100) if total else 0,
+            }
+
+        # 聚合 gate 统计
+        gate_summary = {}
+        for pid, data in gate_stats.items():
+            t = data["total"]
+            gate_summary[pid] = {
+                "total": t,
+                "pass_rate": round(data["pass"] / t * 100) if t else 0,
+                "fail_count": data["fail"],
+            }
+
+        return {
+            "project_count": len(projects),
+            "total_agent_calls": sum(a["total"] for a in agent_summary.values()),
+            "phase_stats": phase_summary,
+            "agent_stats": agent_summary,
+            "gate_stats": gate_summary,
+            "projects": projects,
+        }
+
+    def find_similar_projects(
+        self, division: str = None, data_source: str = None,
+        method: str = None, n: int = 5
+    ) -> list[dict]:
+        """为新项目找到历史上最相似的已完成项目。
+
+        基于 division、data_source、method 关键词模糊匹配,
+        按相似度评分 (division +4, data_source +2, method +3)。
+
+        Args:
+            division: 事业部 (geriatrics/urology/pediatrics)
+            data_source: 数据源关键词 (CHARLS/MIMIC/SEER 等)
+            method: 方法关键词 (XGBoost/SHAP/logistic 等)
+            n: 返回数量
+
+        Returns:
+            相似项目列表, 每项含 id/division/request/status/score
+        """
+        import json as _json
+
+        candidates = []
+        vaults_to_search = [self.vault] + list(self.vaults.values())
+
+        for vault in vaults_to_search:
+            proj_dir = vault / "projects"
+            if not proj_dir.exists():
+                continue
+
+            for project_path in proj_dir.iterdir():
+                if not project_path.is_dir() or project_path.name.startswith("_"):
+                    continue
+
+                state_path = project_path / "project_state.json"
+                if not state_path.exists():
+                    continue
+
+                try:
+                    state = _json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                score = 0
+                proj_div = state.get("division", "")
+                proj_req = state.get("user_request", "")
+
+                if division and proj_div == division:
+                    score += 4
+                if data_source and data_source.lower() in proj_req.lower():
+                    score += 2
+                if method and method.lower() in proj_req.lower():
+                    score += 3
+
+                if score > 0:
+                    candidates.append({
+                        "id": project_path.name,
+                        "division": proj_div,
+                        "request": proj_req[:150],
+                        "status": state.get("status", ""),
+                        "score": score,
+                    })
+
+        candidates.sort(key=lambda x: -x["score"])
+        return candidates[:n]
+
+    def extract_bottlenecks(self) -> list[dict]:
+        """识别系统级瓶颈。
+
+        基于 aggregate_run_statistics() 的数据, 识别:
+        - 哪个 Phase 平均耗时最长
+        - 哪个 Gate 失败率最高
+        - 哪个 Agent 成功率最低
+
+        Returns:
+            [{"type": "phase_slow|gate_fail|agent_low", "target": str,
+              "value": str, "suggestion": str}, ...]
+        """
+        stats = self.aggregate_run_statistics()
+        bottlenecks = []
+
+        # Phase 耗时瓶颈
+        phase_stats = stats.get("phase_stats", {})
+        if phase_stats:
+            slowest = max(phase_stats.items(), key=lambda x: x[1].get("avg_sec", 0))
+            bottlenecks.append({
+                "type": "phase_slow",
+                "target": slowest[0],
+                "value": f"{slowest[1].get('avg_sec', 0):.0f}s avg",
+                "suggestion": f"Phase {slowest[0]} 是耗时瓶颈, 考虑增加并行度或拆分任务",
+            })
+
+        # Gate 失败瓶颈
+        gate_stats = stats.get("gate_stats", {})
+        if gate_stats:
+            worst_gate = max(gate_stats.items(),
+                            key=lambda x: x[1].get("fail_count", 0))
+            if worst_gate[1].get("fail_count", 0) > 0:
+                bottlenecks.append({
+                    "type": "gate_fail",
+                    "target": worst_gate[0],
+                    "value": f"{worst_gate[1].get('fail_count')} failures",
+                    "suggestion": f"Gate {worst_gate[0]} 失败最多, 检查对应 check 函数是否需要校准",
+                })
+
+        # Agent 成功率瓶颈
+        agent_stats = stats.get("agent_stats", {})
+        if agent_stats:
+            worst_agent = min(agent_stats.items(),
+                             key=lambda x: x[1].get("success_rate", 100))
+            if worst_agent[1].get("success_rate", 100) < 70:
+                bottlenecks.append({
+                    "type": "agent_low",
+                    "target": worst_agent[0],
+                    "value": f"{worst_agent[1].get('success_rate')}% success rate",
+                    "suggestion": f"Agent {worst_agent[0]} 成功率偏低, 审查 system prompt",
+                })
+
+        return bottlenecks
+
+    # ================================================================
+    # 知识图谱 (知识管理部 — 研讨厅定量化数据支撑)
+    # ================================================================
+
+    def find_related_projects(self, project_id: str, n: int = 5) -> list[dict]:
+        """找到与指定项目最相关的其他项目。
+
+        基于 division + request 文本相似度 (关键词重叠度),
+        返回关联度最高的 n 个项目。
+
+        Returns:
+            [{"id": str, "division": str, "request": str, "overlap": int, "status": str}]
+        """
+        import json as _json
+
+        # 先获取目标项目的特征
+        target_div = ""
+        target_words = set()
+        vaults_to_search = [self.vault] + list(self.vaults.values())
+
+        for vault in vaults_to_search:
+            proj_dir = vault / "projects"
+            if not proj_dir.exists():
+                continue
+
+            target_path = proj_dir / project_id
+            if not target_path.exists():
+                continue
+
+            state_path = target_path / "project_state.json"
+            if state_path.exists():
+                try:
+                    state = _json.loads(state_path.read_text(encoding="utf-8"))
+                    target_div = state.get("division", "")
+                    req = state.get("user_request", "")
+                    target_words = set(req.lower().split())
+                except Exception:
+                    pass
+            break
+
+        if not target_words:
+            return []
+
+        related = []
+        for vault in vaults_to_search:
+            proj_dir = vault / "projects"
+            if not proj_dir.exists():
+                continue
+
+            for project_path in proj_dir.iterdir():
+                if not project_path.is_dir() or project_path.name.startswith("_"):
+                    continue
+                if project_path.name == project_id:
+                    continue
+
+                state_path = project_path / "project_state.json"
+                if not state_path.exists():
+                    continue
+
+                try:
+                    state = _json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                div = state.get("division", "")
+                req = state.get("user_request", "")
+
+                # 关键词重叠度
+                req_words = set(req.lower().split())
+                overlap = len(target_words & req_words) if req_words else 0
+
+                # division 匹配加分
+                if target_div and div == target_div:
+                    overlap += 10
+
+                if overlap > 0:
+                    related.append({
+                        "id": project_path.name,
+                        "division": div,
+                        "request": req[:120],
+                        "overlap": overlap,
+                        "status": state.get("status", ""),
+                    })
+
+        related.sort(key=lambda x: -x["overlap"])
+        return related[:n]
+
+    def get_method_usage_stats(self) -> dict:
+        """统计各方法在不同项目中的使用频率。
+
+        扫描所有项目的 project_state.json 和 gate reports,
+        提取方法关键词 (XGBoost/LASSO/SHAP/logistic/SMOTE 等)。
+
+        Returns:
+            {method: {"count": int, "projects": [str], "avg_auc": float}}
+        """
+        import json as _json
+        from collections import defaultdict
+
+        method_keywords = [
+            "XGBoost", "LightGBM", "CatBoost", "Random Forest",
+            "Logistic Regression", "Elastic Net", "LASSO",
+            "SHAP", "SMOTE", "Cox PH", "DeepSurv", "LSTM", "Transformer"
+        ]
+
+        stats = defaultdict(lambda: {"count": 0, "projects": []})
+        vaults_to_search = [self.vault] + list(self.vaults.values())
+
+        for vault in vaults_to_search:
+            proj_dir = vault / "projects"
+            if not proj_dir.exists():
+                continue
+
+            for project_path in proj_dir.iterdir():
+                if not project_path.is_dir() or project_path.name.startswith("_"):
+                    continue
+
+                state_path = project_path / "project_state.json"
+                if not state_path.exists():
+                    continue
+
+                try:
+                    state = _json.loads(state_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                req = state.get("user_request", "")
+                for method in method_keywords:
+                    if method.lower() in req.lower():
+                        stats[method]["count"] += 1
+                        if project_path.name not in stats[method]["projects"]:
+                            stats[method]["projects"].append(project_path.name)
+
+        return dict(stats)
