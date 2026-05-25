@@ -101,12 +101,24 @@ def _build_data_sources() -> dict[str, DataSourceConfig]:
             supported_tools=["list_datasource_files", "read_datasource_headers"],
             prefetcher_key="registry",
         ),
+        "PIC": DataSourceConfig(
+            name="PIC",
+            path=resolve_path("PIC_DATA_DIR", "D:/database/datasets/PIC"),
+            category="ehr",
+            description="儿科重症监护数据库 (Pediatric Intensive Care), 浙江大学医学院附属儿童医院单中心 PICU/NICU/CCU, ~12,881 患者, 2010-2018",
+            supported_tools=[
+                "list_datasource_files", "read_datasource_headers",
+                "read_datasource_sample", "search_datasource_variable",
+            ],
+            prefetcher_key="ehr",
+        ),
     }
 
 # 事业部常用数据源 (仅作为默认推荐, 不限制使用)
 DIVISION_DEFAULT_SOURCES: dict[str, list[str]] = {
     "geriatrics": ["CHARLS", "CLHLS", "HRS", "ELSA", "UK_BIOBANK", "NHANES"],
     "urology": ["MIMIC-IV", "SEER", "NHANES"],
+    "pediatrics": ["PIC", "MIMIC-IV"],
 }
 
 
@@ -120,7 +132,7 @@ class EngineConfig:
     company_dir: Path = field(default=None)  # NEW: company/ dir
 
     # --- 公司模式 ---
-    active_divisions: list = field(default_factory=lambda: ["geriatrics", "urology"])
+    active_divisions: list = field(default_factory=lambda: ["geriatrics", "urology", "pediatrics"])
 
     # --- 多知识库 (在 __post_init__ 中填充实际路径) ---
     obsidian_vault: Path = field(default_factory=Path)
@@ -219,6 +231,7 @@ class EngineConfig:
             self.obsidian_vaults = {
                 "geriatrics": Path(obs_home) / "laoNianYiXue",
                 "urology": Path(obs_home) / "miNiaoWaiKe",
+                "pediatrics": Path(obs_home) / "erKe",
             }
 
         # 4. 项目产出目录 — 并发生产时每个项目独立子目录
@@ -263,6 +276,9 @@ def load_config(**overrides) -> EngineConfig:
     if os.getenv("SEER_DATA_DIR"):
         if "SEER" in config.data_sources:
             config.data_sources["SEER"].path = Path(os.getenv("SEER_DATA_DIR"))
+    if os.getenv("PIC_DATA_DIR"):
+        if "PIC" in config.data_sources:
+            config.data_sources["PIC"].path = Path(os.getenv("PIC_DATA_DIR"))
     if os.getenv("ACTIVE_DIVISIONS"):
         config.active_divisions = os.getenv("ACTIVE_DIVISIONS").split(",")
 
