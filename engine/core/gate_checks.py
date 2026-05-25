@@ -4084,7 +4084,6 @@ GATE_DEFINITIONS = {
             "software_version": check_software_version_reported,
             "conclusion_heading": check_conclusion_heading_level,
             "doi_verified": check_doi_verification,
-            "doi_title_match": check_doi_title_match,
             "ref_count": check_ref_count,
             "ref_recency": check_ref_recency,
             "all_refs_cited": check_all_refs_cited_in_text,

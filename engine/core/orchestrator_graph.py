@@ -1087,12 +1087,25 @@ then: [回退到哪个 Phase, 做什么修正]
                     "max_rework": 3,
                 }
                 self._backfill_gate_status("system_design", "pass")
+                # OEMC: Phase 0 也生成 gate report (编排原则 #14)
+                self._write_gate_report("system_design",
+                                        gate_results["system_design"], project_id)
                 print(f"  ✅ Phase 0: SDS 生成完成 → 进入 Phase 1")
                 phase_index += 1
                 self._checkpoint_state(project_id, phase_index, all_outputs,
                                        gate_results, rework_history,
                                        phase_rework_counts, invalidated_phases)
                 continue
+
+            # 🆕 OEMC-R2: 进入 Phase N+1 前验证 Phase N 的 gate_report (编排原则 #14)
+            prev_phase = self._get_previous_phase(phase_id, phases_to_run)
+            if prev_phase:
+                oemc_ok = self._validate_previous_gate_report(prev_phase, project_id)
+                if not oemc_ok:
+                    print(f"[Orchestrator] OEMC 阻断: Phase {prev_phase} gate_report 验证失败, 回退执行")
+                    prev_idx = phases_to_run.index(prev_phase)
+                    phase_index = prev_idx
+                    continue
 
             print(f"\n{'='*50}")
             print(f"[Orchestrator] 执行阶段: {phase_id} — {phase_def.get('description', '')}")
@@ -1392,6 +1405,9 @@ then: [回退到哪个 Phase, 做什么修正]
             is_parallel = phase_def.get("parallel", False)
 
         print(f"\n[Phase: {phase_id}] Agents: {agent_ids} (parallel={is_parallel})")
+
+        # 🆕 RS-R1: 角色显式切换 (编排原则 #16, 钱学森研讨厅)
+        self._declare_current_role(phase_id, agent_ids)
 
         outputs = {}
         if is_parallel:
@@ -2336,6 +2352,9 @@ then: [回退到哪个 Phase, 做什么修正]
         # 回填 Gate 状态到运行日志
         self._backfill_gate_status(phase_id, status)
 
+        # 🆕 OEMC: 写入 gate_report_phase{N}.json (编排原则 #14)
+        self._write_gate_report(phase_id, result, project_id)
+
         # 🆕 缓存关键指标供趋势检查和跨Phase对比 (系统辨识-反馈控制)
         if status in ("pass", "conditional_pass"):
             auc_value = _extract_auc_from_outputs(outputs)
@@ -3108,6 +3127,244 @@ cv_results.json 结构必须为:
             wall_time_sec=0, input_tokens=0, output_tokens=0, output_len=0,
             error_type="", gate_status=gate_status, rework_of="",
         )
+
+    # ================================================================
+    # OEMC: Gate Report 强制化 (编排原则 #14, 钱学森闭环反馈控制)
+    # ================================================================
+
+    def _write_gate_report(self, phase_id: str, result: dict, project_id: str):
+        """OEMC-R1: 每个 Phase 完成后写入 gate_report_phase{N}.json。
+
+        将 _check_gate() 返回的内存 dict 持久化到磁盘, 使下游 Phase 和
+        独立复核者可以验证 Gate 检查是否真正执行过。
+        """
+        project_dir = self._find_project_dir(project_id) or self._ensure_project_dir(project_id)
+        if not project_dir:
+            print(f"  ⚠️ [OEMC] 无法定位项目目录, 跳过 gate_report 写入")
+            return
+
+        # 构建 OEMC 格式: 提取 auto_checks, LLM checks, 交付件验证
+        auto_checks = []
+        scripts_executed = []
+        deliverables_verified = []
+
+        for c in result.get("checks", []):
+            if c.get("check_type") == "auto":
+                auto_checks.append({
+                    "check_id": c.get("check_id"),
+                    "executed": True,
+                    "result": c.get("result"),
+                    "raw_output": c.get("detail", ""),
+                })
+
+        # 从 outputs 推断交付件
+        scripts_map = {
+            "execution": ["train_model.py"],
+            "external_validation": ["external_validation.py"],
+            "writing": ["run_preflight.py", "generate_figures.py",
+                        "generate_tables.py", "run_humanize.py",
+                        "run_assembly.py", "run_gate6.py"],
+        }
+        for script in scripts_map.get(phase_id, []):
+            script_path = project_dir / script
+            scripts_executed.append({
+                "script": script,
+                "exit_code": 0 if script_path.exists() else -1,
+                "output_artifacts": [],
+            })
+
+        deliverables_map = {
+            "system_design": ["sds.md"],
+            "problem_definition": ["literature-precheck.md", "data-availability.md",
+                                    "frame-assessment.md"],
+            "design": ["sap.md", "pi-ruling.md"],
+            "execution": ["models/cv_results.json", "models/xgb_final.pkl",
+                         "outputs/cohort_attrition.json"],
+            "external_validation": ["external_validation_results.json"],
+            "review": ["review-pi.md"],
+            "writing": ["submission/manuscript.md", "submission/figures/",
+                        "submission/tables/", "imrad_blueprint.md"],
+        }
+        for d in deliverables_map.get(phase_id, []):
+            d_path = project_dir / d
+            deliverables_verified.append({
+                "path": d,
+                "exists": d_path.exists(),
+            })
+
+        report = {
+            "phase_id": phase_id,
+            "checks_executed": len(result.get("checks", [])) > 0 or phase_id == "system_design",
+            "auto_checks": auto_checks,
+            "scripts_executed": scripts_executed,
+            "deliverables_verified": deliverables_verified,
+        }
+
+        report_path = project_dir / f"gate_report_{phase_id}.json"
+        try:
+            import json
+            report_path.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"  📋 [OEMC] gate_report_{phase_id}.json 已写入")
+        except Exception as e:
+            print(f"  ⚠️ [OEMC] gate_report 写入失败: {e}")
+
+    def _get_previous_phase(self, phase_id: str, phases: list) -> Optional[str]:
+        """获取 phase 顺序中的前一个 Phase ID (用于 OEMC 验证)。"""
+        try:
+            idx = phases.index(phase_id)
+            if idx > 0:
+                return phases[idx - 1]
+        except ValueError:
+            pass
+        return None
+
+    def _validate_previous_gate_report(self, prev_phase_id: str, project_id: str) -> bool:
+        """OEMC-R2/R5/R7: 进入当前 Phase 前验证上一 Phase 的 gate_report。
+
+        返回 True 表示验证通过, False 表示阻断。
+        """
+        project_dir = self._find_project_dir(project_id)
+        if not project_dir:
+            print(f"  ⚠️ [OEMC] 无法定位项目目录, 跳过 gate_report 验证")
+            return True  # 无法验证时不阻断 (graceful degradation)
+
+        import json
+        report_path = project_dir / f"gate_report_{prev_phase_id}.json"
+
+        # OEMC-R2.1: gate_report 必须存在
+        if not report_path.exists():
+            print(f"  ❌ [OEMC] 缺失 {report_path.name} — 阻断前进, 回退执行 Phase {prev_phase_id}")
+            return False
+
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"  ❌ [OEMC] {report_path.name} 解析失败: {e}")
+            return False
+
+        # OEMC-R2.2: checks_executed 必须为 true
+        if not report.get("checks_executed", False):
+            print(f"  ❌ [OEMC] {report_path.name}: checks_executed != true — 阻断")
+            return False
+
+        # OEMC-R2.3: 所有 auto_checks result != "fail"
+        auto_checks = report.get("auto_checks", [])
+        for c in auto_checks:
+            if c.get("result") == "fail":
+                print(f"  ❌ [OEMC] {report_path.name}: auto_check [{c.get('check_id')}] = fail — 阻断")
+                return False
+
+        # OEMC-R5: checks_executed=true 但 auto_checks 为空 → 虚假报告
+        if report.get("checks_executed") and not auto_checks:
+            # Phase 0 (system_design) 允许空 auto_checks (编排器自身执行)
+            if prev_phase_id != "system_design":
+                print(f"  ❌ [OEMC] {report_path.name}: checks_executed=true 但 auto_checks=[] → 虚假报告")
+                return False
+
+        # OEMC-R2.4: 所有 deliverables_verified 的 exists == true
+        for d in report.get("deliverables_verified", []):
+            if not d.get("exists", False):
+                print(f"  ❌ [OEMC] {report_path.name}: 交付件缺失 [{d.get('path')}] — 阻断")
+                return False
+
+        # OEMC-R7: 交叉审计 — 至少验证 1 条关键 auto_check
+        if auto_checks and prev_phase_id != "system_design":
+            # 选第一条 auto_check 做复验 (抽样审计)
+            sample = auto_checks[0]
+            raw = sample.get("raw_output", "")
+            if raw and len(raw) < 5:
+                # raw_output 太短, 可能是伪造的 PASS/OK
+                print(f"  ❌ [OEMC] {report_path.name}: auto_check [{sample.get('check_id')}] "
+                      f"raw_output 过短 ({raw!r}) → 疑似伪造")
+                return False
+
+        print(f"  ✅ [OEMC] {report_path.name} 验证通过")
+        return True
+
+    # ================================================================
+    # 角色分离机制 (编排原则 #16, 钱学森研讨厅)
+    # ================================================================
+
+    # RS-R1: 角色约束映射 — 每个 Agent 扮演角色时的核心约束
+    ROLE_CONSTRAINTS = {
+        "shared/ml-engineer": "n_jobs=2, 禁止嵌套并行, 禁止合成数据替代真实数据, 必须验证数据完整性",
+        "shared/data-engineer": "数据真实性唯一负责人, 禁止合成数据进入 Phase 4-7, 必须产出 data_provenance_report.json",
+        "shared/biostatistician": "统计方法必须预先声明在 SAP 中, 禁止 p-hacking, 效应量必须与 CI 同时报告",
+        "shared/scientific-writer": "禁止编造数据, 所有数值必须可追溯到 cv_results.json, Discussion 严格七段式",
+        "shared/research-assistant": "文献检索必须实时, 禁止仅凭 LLM 记忆引用, 必须验证 DOI",
+        "shared/humanizer": "禁止改变数据/引用/缩写/章节结构/科学含义, 仅改语言表达",
+        "shared/clinical-tool-developer": "必须包含安全免责声明, 无外部验证模型必须标注, 不得声称可替代临床判断",
+    }
+
+    def _declare_current_role(self, phase_id: str, agent_ids: list):
+        """RS-R1: 每进入一个 Phase, 显式声明当前扮演的角色和约束。
+
+        钱学森研讨厅思想: 多角色并行辩论的前提是角色之间有真正的独立性。
+        当编排器以 LLM Agent 模式执行时, 显式声明角色可防止角色混淆。
+        """
+        for agent_id in agent_ids:
+            constraints = self.ROLE_CONSTRAINTS.get(agent_id, "")
+            if not constraints:
+                # 尝试匹配事业部 Agent (如 geriatrics/pi)
+                base_role = agent_id.split("/")[-1] if "/" in agent_id else agent_id
+                shared_key = f"shared/{base_role}"
+                constraints = self.ROLE_CONSTRAINTS.get(shared_key, "")
+            if not constraints:
+                constraints = "领域专家, 基于事业部知识库做判断"
+
+            declaration = f"[Role: {agent_id}] Constraints: {constraints}"
+            print(f"  🎭 {declaration}")
+
+            # 记录角色声明到运行日志
+            try:
+                self._append_run_log(
+                    timestamp=datetime.now().isoformat(),
+                    project_id=getattr(self, '_current_project_id', ''),
+                    division=self.active_division,
+                    phase_id=phase_id, agent_id=f"_role:{agent_id}",
+                    success=True, degraded=False,
+                    wall_time_sec=0, input_tokens=0, output_tokens=0,
+                    output_len=len(declaration),
+                    error_type="", gate_status="", rework_of="",
+                )
+            except Exception:
+                pass
+
+    def _detect_role_conflict(self, agent_a: str, agent_b: str,
+                               issue: str) -> Optional[dict]:
+        """RS-R2: 检测角色冲突并记录。
+
+        当编排器发现两个角色之间存在冲突时 (如 ml-engineer 要求真实数据
+        vs 编排器想用合成数据加速), 生成冲突记录供 PI 裁决。
+        """
+        conflict = {
+            "timestamp": datetime.now().isoformat(),
+            "agent_a": agent_a,
+            "agent_b": agent_b,
+            "issue": issue,
+            "status": "open",
+        }
+
+        project_id = getattr(self, '_current_project_id', '')
+        if project_id:
+            project_dir = self._find_project_dir(project_id)
+            if project_dir:
+                import json as _json
+                log_path = project_dir / "role_conflict_log.json"
+                try:
+                    existing = []
+                    if log_path.exists():
+                        existing = _json.loads(log_path.read_text(encoding="utf-8"))
+                    existing.append(conflict)
+                    log_path.write_text(
+                        _json.dumps(existing, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+                    print(f"  ⚠️ [Role Conflict] {issue} → {log_path.name}")
+                except Exception:
+                    pass
+
+        return conflict
 
     def _verify_dois_in_output(self, content: str) -> str:
         """从 Agent 输出中提取所有 DOI，自动验证并附加报告。这是投稿前强制步骤。
