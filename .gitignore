@@ -16,7 +16,6 @@ build/
 .pytest_cache/
 .vscode/
 .idea/
-.claude/
 
 # Runtime outputs
 /outputs/
