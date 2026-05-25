@@ -231,6 +231,8 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 
 ## 5. 知识管理
 
+知识管理部是公司三大管理层实体之一，核心职责为**跨项目知识累积**。其管辖范围包括经验规则传播（B环#10）、运营分析（系统辨识）、以及文献策展（中央文献库）。
+
 ### 5.1 多知识库架构
 
 ```
@@ -244,6 +246,38 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 - 方法学笔记 (methods/) 存放于共享项目库
 - 事业部特定概念 (concepts/) 存放于各自知识库
 - 文献笔记 (literature/) 按事业部分库，交叉领域文献存入双方库 (通过 wikilink 关联)
+
+### 5.3 中央文献库 — 文献策展
+
+公司各项目验证的文献是公司资产，由知识管理部统一管理，为所有项目提供本地优先的文献复用能力。
+
+**入库标准**:
+- 仅接收已通过 Gate 3' spot audit 的 L1/L2 条目
+- 文件名: `{year}-{firstauthor}-{topic}.md`（人可读，自然排序）
+- 通过 frontmatter 中 `pmid` 或 `doi` 字段做到去重——同篇文献不重复入库
+
+**文献笔记最低字段**（在 t-literature-note.md 模板基础上扩展）:
+```yaml
+---
+pmid: 40232654
+doi: 10.1007/s11154-025-09963-8
+source_tier: L2          # L1=全文, L2=PubMed摘要
+verified_date: 2026-05-25
+direct_quote: "WC may act as an accelerator of biological aging..."
+project_source: glp1-sarcopenia-weight-cycling-review
+---
+```
+
+**检索与复用**: 项目 Phase 3' 验证文献时，先查本地 vault `literature/` 目录。命中 → 直接复用已有摘要和引用。未命中 → PubMed WebFetch → 验证 → 入库。
+
+**入库时机**: Phase 3' Gate spot audit 通过后，由 research-assistant 调用 `create_literature_note()` 批量写入。未经 spot audit 的条目不得入库。
+
+### 5.4 文献笔记质量标准
+
+- `direct_quote` 必须是从 PubMed 摘要或全文中摘录的原句，不得改写
+- `source_tier` 必须如实标注，L2 条目不得伪装为 L1
+- 同一篇文献的多个引用场景（如不同 Section 引用同一论文的不同数据点）共用一篇文献笔记，通过正文 `##` 小节区分
+- 文献笔记 status 字段: `unread` → 入库后标记为 `skimmed`(L2) 或 `read`(L1)
 
 ---
 
