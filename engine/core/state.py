@@ -163,7 +163,7 @@ class OrchestratorState(TypedDict):
     """LangGraph 的全局编排状态"""
     # --- 用户输入 ---
     user_request: str
-    user_intent: str  # new_project | literature_review | paper_writing | quick_consult | status_check
+    user_intent: str  # new_project | literature_review | paper_writing | quick_consult | status_check | kb_enrich | direction_discovery
 
     # --- 公司模式 ---
     active_division: str  # "geriatrics" | "urology" | "pediatrics"

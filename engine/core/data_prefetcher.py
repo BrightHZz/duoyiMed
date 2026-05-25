@@ -246,6 +246,7 @@ class DataPrefetcher:
         parts.append("1. PubMed: `([P关键词]) AND ([O关键词]) AND ([M关键词]) AND prediction`\n")
         parts.append("2. arXiv/medRxiv: `[O关键词] [M关键词] recent advances 2025 2026`\n")
         parts.append("3. 跨队列: `[O关键词] prediction AND (cohort OR registry) AND machine learning`\n")
+        parts.append("4. 高分综述缺口: `[P关键词] AND review AND (future directions OR research gap OR unmet need) 2025 2026`\n")
         parts.append("⚠️ **时效性要求**: 优先近 5 年文献 (当前年份 - 5), 经典方法学文献除外\n")
         parts.append("提取 top 3-5 最相似论文的: 数据源/样本量/方法/AUC/验证策略\n")
         parts.append("输出《选题文献预检报告》交 PI 做 FRAME 评估的 F 维度输入。\n")
