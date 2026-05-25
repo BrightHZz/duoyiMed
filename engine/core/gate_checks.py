@@ -953,7 +953,7 @@ def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
                 return True, "跳过 (无 Discussion 章节)"
 
             # 提取 Discussion 内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if not disc_match:
                 return True, "跳过"
             disc = disc_match.group(1)
@@ -1035,7 +1035,7 @@ def check_discussion_explanation_section(outputs: dict, orch) -> tuple:
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             if "## Discussion" not in output:
                 return True, "跳过 (无 Discussion 章节)"
-            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if not disc_match:
                 return True, "跳过"
             disc = disc_match.group(1)
@@ -1081,7 +1081,7 @@ def check_discussion_no_subheadings(outputs: dict, orch) -> tuple:
             if "## Discussion" not in output:
                 return True, "跳过 (无 Discussion 章节)"
             # 提取 Discussion 到下一个 ## 之间的内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if not disc_match:
                 return True, "跳过"
             disc_content = disc_match.group(1)
@@ -1126,7 +1126,7 @@ def check_abstract_word_count(outputs: dict, orch) -> tuple:
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             import re
             abs_match = re.search(
-                r'## Abstract\n(.*?)(?=##\s|\Z)', output, re.DOTALL | re.IGNORECASE
+                r'## Abstract\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL | re.IGNORECASE
             )
             if abs_match:
                 text = abs_match.group(1).strip()
@@ -1245,7 +1245,7 @@ def check_normality_test_reported(outputs: dict, orch) -> tuple:
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             methods_section = output
             # Extract Methods section
-            m = re.search(r'## Methods?\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            m = re.search(r'## Methods?\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if m:
                 methods_section = m.group(1)
             has_normality = any(kw in methods_section.lower() for kw in [
@@ -1263,7 +1263,7 @@ def check_missing_data_reported(outputs: dict, orch) -> tuple:
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             methods_section = output
-            m = re.search(r'## Methods?\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            m = re.search(r'## Methods?\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if m:
                 methods_section = m.group(1)
             has_missing_rate = any(kw in methods_section.lower() for kw in [
@@ -1287,7 +1287,7 @@ def check_software_version_reported(outputs: dict, orch) -> tuple:
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
             methods_section = output
-            m = re.search(r'## Methods?\n(.*?)(?=##\s|\Z)', output, re.DOTALL)
+            m = re.search(r'## Methods?\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
             if m:
                 methods_section = m.group(1)
             # Check for common tools + version patterns
@@ -1624,7 +1624,7 @@ def check_humanize_quality(outputs: dict, orch) -> tuple:
                 output, re.DOTALL
             )
             conclusion_match = re.search(
-                r'## Conclusion\n(.*?)(?=##\s|\Z)',
+                r'## Conclusion\n(.*?)(?=\n##\s|\Z)',
                 output, re.DOTALL
             )
 
@@ -3620,6 +3620,375 @@ def check_deployment_config_complete(outputs: dict, orch) -> tuple:
     return True, "部署配置完整 ✓"
 
 
+
+
+# ================================================================
+# IMRAD 结构验真检查 (钱学森模块二: 可靠性工程 — 结构一致性交叉验证)
+# 2026-05-22 新增, 起因: IMRAD 规范在 Agent prompt 中但无强制脚本验证
+# ================================================================
+
+def check_imrad_blueprint_exists(outputs: dict, orch) -> tuple:
+    """检查 imrad_blueprint.md 是否存在 (写作前强制产出)"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+    blueprint_path = os.path.join(proj_dir, 'imrad_blueprint.md')
+    if os.path.exists(blueprint_path):
+        content = open(blueprint_path, encoding='utf-8').read()
+        has_approval = 'APPROVED' in content
+        if has_approval:
+            return True, "IMRAD 蓝图存在且已获 PI 签批"
+        else:
+            return False, "IMRAD 蓝图存在但缺少 PI 签批"
+    return False, (
+        "IMRAD 蓝图缺失 — 写作前必须产出 imrad_blueprint.md"
+    )
+
+
+def check_imrad_heading_hierarchy(outputs: dict, orch) -> tuple:
+    """IMRAD heading 层级验真"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+
+    candidates = [
+        os.path.join(proj_dir, 'submission', 'manuscript.md'),
+        os.path.join(proj_dir, 'manuscript.md'),
+    ]
+    content = None
+    for fp in candidates:
+        if os.path.exists(fp):
+            content = open(fp, encoding='utf-8').read()
+            break
+
+    if content is None:
+        return False, "manuscript.md 未找到"
+
+    errors = []
+
+    h2_headers = re.findall(r'^## (.+)$', content, re.MULTILINE)
+    required_h2 = ['Introduction', 'Methods', 'Results', 'Discussion', 'Conclusion']
+    for h2 in required_h2:
+        found = any(h2.lower() in h.lower() for h in h2_headers)
+        if not found:
+            errors.append(f"missing ## {h2}")
+
+    intro_match = re.search(r'(?:\n|^)## Introduction\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if intro_match and re.search(r'\n###\s', intro_match.group(1)):
+        errors.append("### under Introduction")
+
+    methods_match = re.search(r'## Methods\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if methods_match:
+        ms = methods_match.group(1)
+        m_h3 = [h.lower() for h in re.findall(r'^### (.+)$', ms, re.MULTILINE)]
+        for rm in ['Study Design', 'Study Population', 'Outcomes and Predictors',
+                     'Statistical Analysis', 'Sensitivity Analysis']:
+            if not any(rm.lower() in h for h in m_h3):
+                errors.append(f"Methods missing ### {rm}")
+        if re.search(r'####\s', ms):
+            errors.append("#### under Methods")
+    else:
+        errors.append("## Methods not found")
+
+    results_match = re.search(r'## Results\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if results_match:
+        rs = results_match.group(1)
+        r_h3 = [h.lower() for h in re.findall(r'^### (.+)$', rs, re.MULTILINE)]
+        for rr in ['Study Population', 'Model Performance', 'Feature Importance',
+                     'Secondary', 'Sensitivity']:
+            if not any(rr.lower() in h for h in r_h3):
+                errors.append(f"Results missing ### {rr}")
+        if re.search(r'####\s', rs):
+            errors.append("#### under Results")
+    else:
+        errors.append("## Results not found")
+
+    disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+    if disc_match:
+        ds = disc_match.group(1)
+        if re.search(r'\n###\s', ds):
+            errors.append("### under Discussion (use blank-line-separated paragraphs)")
+        if re.search(r'####\s', ds):
+            errors.append("#### under Discussion")
+    else:
+        errors.append("## Discussion not found")
+
+    if '### Conclusion' in content:
+        errors.append("Conclusion must be ## not ###")
+    if not re.search(r'^## Conclusion', content, re.MULTILINE):
+        errors.append("## Conclusion missing")
+
+    if errors:
+        return False, "IMRAD heading: " + "; ".join(errors)
+    return True, "IMRAD heading hierarchy OK"
+
+
+def check_methods_results_1_to_1(outputs: dict, orch) -> tuple:
+    """Methods/Results 1:1 mapping check"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+
+    bp = os.path.join(proj_dir, 'imrad_blueprint.md')
+    if not os.path.exists(bp):
+        return False, "IMRAD blueprint missing, cannot verify Methods/Results mapping"
+
+    blueprint = open(bp, encoding='utf-8').read()
+    mapping_match = re.search(
+        r'## 3\. Methods.*?Results.*?\n\n(.*?)(?=\n##\s|\n---|\Z)',
+        blueprint, re.DOTALL
+    )
+    if not mapping_match:
+        return False, "Blueprint missing module 3 (Methods/Results mapping table)"
+
+    mapping_text = mapping_match.group(1)
+    data_rows = [
+        r for r in mapping_text.split('\n')
+        if r.strip().startswith('|') and not r.strip().startswith('|---')
+        and 'Methods' not in r and 'Results' not in r and '验证' not in r
+    ]
+
+    if len(data_rows) < 3:
+        return False, f"Only {len(data_rows)} mapping rows, need >=3"
+
+    for i, row in enumerate(data_rows):
+        cells = [c.strip() for c in row.split('|') if c.strip()]
+        if len(cells) < 2:
+            return False, f"Mapping row {i+1} incomplete"
+
+    return True, f"Methods/Results 1:1 mapping OK ({len(data_rows)} rows)"
+
+
+def check_imrad_word_budget(outputs: dict, orch) -> tuple:
+    """IMRAD word budget check"""
+    import os
+    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
+
+    bp = os.path.join(proj_dir, 'imrad_blueprint.md')
+    budget = {}
+    if os.path.exists(bp):
+        blueprint = open(bp, encoding='utf-8').read()
+        bm = re.search(r'## 2\. 字数预算.*?\n\n(.*?)(?=\n##\s|\n---|\Z)', blueprint, re.DOTALL)
+        if bm:
+            for line in bm.group(1).split('\n'):
+                m = re.match(r'\|\s*(\w+)\s*\|\s*(\d+)\s*\|', line)
+                if m:
+                    budget[m.group(1).lower()] = int(m.group(2))
+
+    candidates = [
+        os.path.join(proj_dir, 'submission', 'manuscript.md'),
+        os.path.join(proj_dir, 'manuscript.md'),
+    ]
+    content = None
+    for fp in candidates:
+        if os.path.exists(fp):
+            content = open(fp, encoding='utf-8').read()
+            break
+
+    if content is None:
+        return False, "manuscript.md not found"
+
+    sections = {}
+    for sec in ['Introduction', 'Methods', 'Results', 'Discussion', 'Conclusion']:
+        m = re.search(rf'## {sec}\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL)
+        if m:
+            sections[sec.lower()] = len(m.group(1).split())
+
+    errors = []
+    for sec, bw in budget.items():
+        actual = sections.get(sec)
+        if actual is None:
+            continue
+        if abs(actual - bw) / bw > 0.50:
+            errors.append(f"{sec}: {actual} vs budget {bw} words (>{50}%)")
+
+    if errors:
+        return False, "Word budget exceeded (>50%): " + "; ".join(errors)
+
+    total = sum(sections.values())
+    if total > 5000:
+        return False, f"Total {total} words exceeds 5000 limit"
+
+    return True, f"Word budget OK (total {total} words)"
+
+
+# ============================================================
+# Phase 6: Table 1 分层数据来源验证 (2026-05-24)
+# ============================================================
+def check_table_stratification_provenance(outputs: dict, orch) -> tuple:
+    """验证 Table 1 分层变量来自真实数据源（features_cache.pkl），非 np.random 模拟。
+
+    跨事业部通用: 检测 eFI / frailty_index / Gleason / risk_score 等分层变量。
+    """
+    import os
+    import re
+    import json
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Step 1: Scan generate_tables.py for np.random injection
+    gen_tables = proj_dir / "scripts" / "generate_tables.py"
+    if not gen_tables.exists():
+        gen_tables = proj_dir / "generate_tables.py"
+    if not gen_tables.exists():
+        return True, "跳过 (未找到 generate_tables.py)"
+
+    source = gen_tables.read_text(encoding="utf-8")
+    violations = []
+
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        # np.random used for data generation (not seed/RandomState)
+        m = re.match(r'(\w+)\s*=\s*np\.random\.(?!seed\b|RandomState\b)(\w+)\(', stripped)
+        if m:
+            var_name = m.group(1).lower()
+            func = m.group(2)
+            data_kw = r'(efi|frail|strata|stratum|group_label|risk_score|grade|stage|label|class|cluster|synthetic)'
+            if re.search(data_kw, var_name):
+                ctx = "\n".join(source.split("\n")[max(0,i-3):min(len(source.split("\n")),i+8)])
+                if re.search(r'(Table|table|stratif|group.*by|patients?|cohort)', ctx):
+                    violations.append(f"L{i}: np.random.{func}() -> '{var_name}' in stratification context")
+
+        if re.search(r'(simulate|synthetic).*?(data|score|strata|cohort|patient)', stripped, re.IGNORECASE):
+            violations.append(f"L{i}: simulated/synthetic keyword: {stripped[:100]}")
+
+    # Step 2: Verify stratification source — features_cache.pkl or strata_labels.pkl
+    uses_pkl = bool(re.search(r'(features_cache\.pkl|cache\[.?X.?\])', source))
+
+    # Step 3: Cross-validate Table 1 values against pkl
+    pkl_path = proj_dir / "outputs" / "features_cache.pkl"
+    table1_md = proj_dir / "tables" / "Table1_baseline.md"
+    pkl_deviations = []
+
+    if pkl_path.exists() and table1_md.exists():
+        import pickle
+        try:
+            with open(pkl_path, "rb") as f:
+                cache = pickle.load(f)
+            X = cache.get("X", cache)
+
+            strata_col = None
+            for col in ["efi_score", "frailty_index", "FI_score", "gleason_score", "risk_score"]:
+                if hasattr(X, "columns") and col in X.columns:
+                    strata_col = col
+                    break
+
+            if strata_col is not None:
+                efi_real = X[strata_col].values
+                robust_real = efi_real[efi_real < 0.10]
+                prefrail_real = efi_real[(efi_real >= 0.10) & (efi_real < 0.25)]
+                frail_real = efi_real[efi_real >= 0.25]
+
+                t1_text = table1_md.read_text(encoding="utf-8")
+
+                efi_row = re.search(
+                    r"eFI.*?\|\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\)",
+                    t1_text
+                )
+
+                if efi_row:
+                    t1_overall = float(efi_row.group(1))
+                    pkl_mean = float(efi_real.mean())
+                    dev = abs(t1_overall - pkl_mean) / max(pkl_mean, 0.001) * 100
+                    if dev > 0.5:
+                        pkl_deviations.append(f"eFI mean: Table1={t1_overall:.4f} vs pkl={pkl_mean:.4f} ({dev:.1f}%)")
+
+                    for g_idx, g_name, g_data in [
+                        (3, "Robust", robust_real), (5, "Pre-frail", prefrail_real), (7, "Frail", frail_real)
+                    ]:
+                        if efi_row.group(g_idx):
+                            t1_val = float(efi_row.group(g_idx))
+                            pkl_val = float(g_data.mean()) if len(g_data) > 0 else 0
+                            if pkl_val > 0:
+                                d = abs(t1_val - pkl_val) / pkl_val * 100
+                                if d > 0.5:
+                                    pkl_deviations.append(f"{g_name}: Table1={t1_val:.4f} vs pkl={pkl_val:.4f} ({d:.1f}%)")
+        except Exception as e:
+            pkl_deviations.append(f"pkl validation error: {str(e)}")
+
+    if violations:
+        return False, f"Data-injection patterns detected: {'; '.join(violations)}"
+    if pkl_deviations:
+        return False, f"Table 1 deviates from pkl: {'; '.join(pkl_deviations)}"
+    return True, f"Source={'pkl' if uses_pkl else 'verified'}, violations=0, pkl_deviations=0"
+
+
+# ============================================================
+# Phase 6: Vancouver 参考文献顺序检查 (2026-05-24)
+# ============================================================
+def check_vancouver_reference_order(outputs: dict, orch) -> tuple:
+    """验证参考文献按首次引用顺序编号（Vancouver 风格）。
+
+    跨事业部通用: 读取 manuscript 正文引用顺序并与 References 列表对比。
+    """
+    import os
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Find manuscript
+    manuscript_path = proj_dir / "submission" / "manuscript.md"
+    if not manuscript_path.exists():
+        return True, "跳过 (未找到 manuscript.md)"
+
+    manuscript = manuscript_path.read_text(encoding="utf-8")
+
+    # Cut at References section
+    ref_match = re.search(r"\n#+\s*References?\s*\n", manuscript)
+    body = manuscript[:ref_match.start()] if ref_match else manuscript
+
+    seen = []
+    violations = []
+    for match in re.finditer(r"\[(\d+(?:,\d+)*)\]", body):
+        nums = [int(x) for x in match.group(1).split(",")]
+        for n in nums:
+            if n not in seen:
+                seen.append(n)
+                expected = len(seen)
+                if n != expected:
+                    violations.append(f"[{n}] at position {expected} (should be [{expected}])")
+
+    if not seen:
+        return True, "跳过 (正文中未找到引用)"
+
+    # Check reference list is sequential 1..N
+    ref_nums = set()
+    for m in re.finditer(r"^(\d+)\.\s", manuscript, re.MULTILINE):
+        ref_nums.add(int(m.group(1)))
+    expected_refs = set(range(1, len(seen) + 1))
+    missing = expected_refs - ref_nums
+    extra = ref_nums - expected_refs
+
+    if violations or missing or extra:
+        details = []
+        if violations:
+            details.append(f"Order: {'; '.join(violations[:5])}")
+        if missing:
+            details.append(f"Body refs missing from list: {sorted(missing)}")
+        if extra:
+            details.append(f"List refs not in body: {sorted(extra)}")
+        return False, " | ".join(details)
+
+    max_ref = max(ref_nums) if ref_nums else 0
+    return True, f"{len(seen)} refs in Vancouver order, 1..{max_ref} sequential"
+
+
 # ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
@@ -3715,6 +4084,7 @@ GATE_DEFINITIONS = {
             "software_version": check_software_version_reported,
             "conclusion_heading": check_conclusion_heading_level,
             "doi_verified": check_doi_verification,
+            "doi_title_match": check_doi_title_match,
             "ref_count": check_ref_count,
             "ref_recency": check_ref_recency,
             "all_refs_cited": check_all_refs_cited_in_text,
@@ -3736,6 +4106,12 @@ GATE_DEFINITIONS = {
             "categorical_labels": check_categorical_label_consistency,
             "subgroup_n_consistency": check_subgroup_n_consistency,
             "doi_title_match": check_doi_title_match,
+            "imrad_heading_hierarchy": check_imrad_heading_hierarchy,
+            "imrad_methods_results_1to1": check_methods_results_1_to_1,
+            "imrad_word_budget": check_imrad_word_budget,
+            "imrad_blueprint_exists": check_imrad_blueprint_exists,
+            "stratification_provenance": check_table_stratification_provenance,
+            "vancouver_order": check_vancouver_reference_order,
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

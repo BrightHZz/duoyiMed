@@ -25,10 +25,10 @@ user-invocable: true
   事业部        公共服务
 (Divisions)  (Shared Services)
     │             │
-┌───┴───┐    ┌───┴──────────────────────┐
-│老年医学│    │data-engineer             │
-│泌尿外科│    │biostatistician           │
-└───────┘    │ml-engineer               │
+┌───┴──────────┐    ┌───┴──────────────────────┐
+│老年医学/泌尿外科/儿科│    │data-engineer             │
+└──────────────────┘    │biostatistician           │
+             │ml-engineer               │
              │scientific-writer         │
              │research-assistant        │
              │humanizer                 │
@@ -41,6 +41,7 @@ user-invocable: true
 |--------|------|--------|---------|
 | **geriatrics** | 衰弱、肌少症、跌倒、认知、多病共存 | CHARLS, CLHLS, HRS, ELSA, UK Biobank, NHANES | Lancet Healthy Longevity, GeroScience, BMC Geriatrics |
 | **urology** | 肾结石、BPH、前列腺癌、膀胱癌、UTI | MIMIC-IV, SEER, NHANES | European Urology, J Urology, BMC Urology |
+| **pediatrics** | 新生儿/PICU/NICU/儿童常见病/生长发育/先天性疾病 | PIC, MIMIC-IV, NHANES | JAMA Pediatrics, The Lancet Child & Adolescent Health, Pediatrics, BMC Pediatrics |
 
 ## 八阶段门控工作流
 
@@ -289,6 +290,7 @@ Phase 2/5 采用并行辩论替代流水线审查:
 | 统一数据源库 | `$MAW_OBSIDIAN_HOME/datasets/` |
 | 老年医学知识库 | `$MAW_OBSIDIAN_HOME/laoNianYiXue/` |
 | 泌尿外科知识库 | `$MAW_OBSIDIAN_HOME/miNiaoWaiKe/` |
+| 儿科知识库 | `$MAW_OBSIDIAN_HOME/erKe/` |
 | 运行日志 | `outputs/run_logs/` |
 | 基线存档 | `outputs/baselines/` |
 | Preflight 安全扫描 | `engine/core/preflight_scanner.py` |
@@ -318,6 +320,7 @@ python run_research.py --analyze  # 生成运行状态报告
 ### 事业部路由
 
 - 关键词含 "肾结石/前列腺/MIMIC/SEER" → urology
+- 关键词含 "儿科/儿童/新生儿/PICU/NICU/PIC/小儿/infant/child/pediatric" → pediatrics
 - 关键词含 "衰弱/CHARLS/肌少症/老年" → geriatrics
 - 默认 → geriatrics
 
@@ -511,7 +514,7 @@ Phase 6 编排器在 assembly 之前，必须先执行全 section 自检:
 | 3 | 6 | 1 (train_model.py) | cv_results.json, xgb_final.pkl, cohort_attrition.json | **data_provenance_report.json 必须 is_synthetic==false** |
 | 4 | 3 | 1 (external_validation.py) | external_validation_results.json | 验证数据来源独立于训练数据 |
 | 5 | 4 | 0 | review-pi.md (PI签批) | PI 检查 data_provenance_report.json |
-| 6 | 27 | 4 | submission/manuscript.md, submission/figures/*.png, submission/tables/*.csv | 数值→cv_results→database 三级追溯 |
+| 6 | 31 | 5 | submission/manuscript.md, submission/figures/*.png, submission/tables/*.csv, imrad_blueprint.md | 数值→cv_results→database 三级追溯 |
 | 7 | 5 | 0 | supplements/app.py, supplements/model_info.json | 免责声明标注训练数据来源 |
 
 ## 公司质量标准
@@ -552,7 +555,7 @@ Phase 6 编排器在 assembly 之前，必须先执行全 section 自检:
 
 > **强制**: `generate_figures.py` 和 `generate_tables.py` 输出 caption/table 中的所有数值必须按上述标准舍入, 禁止输出 raw float (如 `0.8423` → 应为 `0.842`)。`check_numerical_precision_consistency` 跨 manuscript/tables/figures 交叉检查同指标精度一致性, 不一致 → Gate 6 FAIL。
 
-### Phase 6 完整 Gate Check 清单 (29 项 auto: 25 存在性/格式性 + 4 数值一致性)
+### Phase 6 完整 Gate Check 清单 (33 项 auto: 29 存在性/格式性/数值 + 4 IMRAD 结构验真)
 
 | # | 检查项 | 检查目标层 | 通过标准 |
 |---|--------|----------|---------|
@@ -586,6 +589,10 @@ Phase 6 编排器在 assembly 之前，必须先执行全 section 自检:
 | **27** | **🆕 Figure 产自基线数据** | 投稿层 | generate_figures.py 中每个图的数据源可追溯到 Phase 3 baseline 文件, 禁止从模型对象重新提取 (2026-05-11 新增) |
 | **28** | **🆕 投稿层结构完整性** | **投稿层** | `submission/` 下无 `sections/` 目录 (2026-05-12 新增) + `submission/figures/` 下仅 `.png`/`.tiff` + `submission/tables/` 下仅 `.csv` + `submission/manuscript.md` 存在 + `submission/manuscript.md` 中不含 `[Classic` 标注 (2026-05-12 新增, 起因: Classic 内部元数据未被 assembly strip 流入投稿层) |
 | **29** | **🆕 Figure 元素防重叠** | 投稿层 | `generate_figures.py` 必须含 constrained_layout/tight_layout + 图例外置(>3条目时+bbox_to_anchor) + 刻度标签旋转(>8个或>5字符时) + dpi≥300 (2026-05-16 新增) |
+| **30** | **🆕 IMRAD 蓝图存在且签批** | root | `imrad_blueprint.md` 存在 + 末尾含 `APPROVED by {division}/pi on {date}` (2026-05-22 新增, 钱学森总体设计部落地) |
+| **31** | **🆕 IMRAD heading 层级验真** | 投稿层 | manuscript.md 的 markdown 层级: ## 必须恰好 5 个 (Introduction/Methods/Results/Discussion/Conclusion) + Methods/Results 必须有且仅有 5 个标准 ### 子标题 + Discussion 下禁止任何 ###/#### (2026-05-22 新增) |
+| **32** | **🆕 Methods ↔ Results 1:1 映射** | 投稿层 | IMRAD 蓝图中映射表 ≥3 行; Methods 中每个分析方法声明必须能在 Results 中找到对应结果回报 (2026-05-22 新增) |
+| **33** | **🆕 IMRAD 字数预算** | 投稿层 | 各节实际字数与蓝图预算偏差 <50%; 全文总字数 ≤5000 (2026-05-22 新增) |
 
 ### Phase 6 Python+LLM 混合执行 (2026-05-12 新增/改造)
 
@@ -599,12 +606,14 @@ Phase 6 编排器在 assembly 之前，必须先执行全 section 自检:
 **执行序列 (编排器必须严格按此顺序调用)**:
 ```
 1. python run_preflight.py              → exit 0 = SAFE,   exit 1 = BLOCKED (安全扫描, 纯 Python)
-2. python generate_figures.py           → 输出 Figure[N]_*.png + .tiff (纯 Python)
-3. python generate_tables.py            → 输出 tables/*.csv + tables/*.md (纯 Python)
-4. [编排器调用 scientific-writer]      → 撰写 sections/*.md (LLM, 唯一需要创造力的步骤)
-5. python run_humanize.py + LLM review  → 两层: Python 扫描禁用词/过渡词/hedge + LLM 评估自然度改善
-6. python run_assembly.py               → exit 0 = 投稿层完整, exit 1 = FAIL (纯 Python, 含全部否定约束)
-7. python run_gate6.py + LLM Gate       → 两层: Python 执行 25 项确定性 auto check + LLM 执行 4 项语义检查
+2. [编排器调用 scientific-writer]      → 产出 imrad_blueprint.md (含层级结构图/字数预算/Methods↔Results 映射表/数值溯源表) + 触发研讨厅三方并行评审 + PI 签批 (蓝图前置, 钱学森总体设计部)
+3. python generate_figures.py           → 输出 Figure[N]_*.png + .tiff (纯 Python)
+4. python generate_tables.py            → 输出 tables/*.csv + tables/*.md (纯 Python)
+5. [编排器调用 scientific-writer]      → 基于蓝图撰写 sections/*.md (LLM, 唯一需要创造力的步骤)
+6. python run_imrad_check.py            → exit 0 = IMRAD 结构合规, exit 1 = FAIL (纯 Python, 4 项检查: heading层级/Methods↔Results映射/Discussion结构/Conclusion独立性)
+7. python run_humanize.py + LLM review  → 两层: Python 扫描禁用词/过渡词/hedge + LLM 评估自然度改善
+8. python run_assembly.py               → exit 0 = 投稿层完整, exit 1 = FAIL (纯 Python, 含全部否定约束)
+9. python run_gate6.py + LLM Gate       → 两层: Python 执行 33 项确定性 auto check + LLM 执行 4 项语义检查
 ```
 
 **各脚本职责、阻断条件与 LLM 集成**:
@@ -612,11 +621,13 @@ Phase 6 编排器在 assembly 之前，必须先执行全 section 自检:
 | 脚本 | Python 职责 (exit 1 阻断) | LLM 职责 (FAIL 阻断) |
 |------|--------------------------|---------------------|
 | `run_preflight.py` | 扫描安全配置 (n_jobs, thread limits, pickle 覆盖, 跨脚本一致性) | — (无需 LLM) |
+| `imrad_blueprint.md` + 研讨厅评审 | scientific-writer 产出蓝图 + PI/biostatistician/clinical-researcher 三方评审 | 研讨厅辩论: 三方独立审阅 → Writer 修订 → PI 签批 (蓝图不签批 = 不可写作) |
 | `generate_figures.py` | 从 cv_results.json 生成 Figure[N]_*.png + .tiff + _data.json + _caption.md | — (无需 LLM) |
 | `generate_tables.py` | 从 cv_results.json 生成 Table 1/2/3 的 .csv 和 .md | — (无需 LLM) |
+| `run_imrad_check.py` | 4 项 IMRAD 结构验真: heading层级/Methods↔Results映射/Discussion结构/Conclusion独立性 | — (纯确定性规则, 无需 LLM) |
 | `run_humanize.py` + LLM | 扫描所有 sections/*.md: banned > 0 或 trans > 3 → exit 1 | 评估去 AI 味改写是否**真正改善了自然度** (非表面替换): 句子是否仍机械、段落是否有节奏变化、hedge 是否适度而非全部删除 → FAIL 则阻断 |
 | `run_assembly.py` | 拼接 manuscript + strip Classic + 复制 figures tables → submission/ + 5 条否定约束 + 自检 | — (纯确定性操作, 无需 LLM) |
-| `run_gate6.py` + LLM Gate | 25 项 Python auto check: 文件存在/命名/字数/DOI/regex → exit 1 | 4 项 LLM semantic check (见下方 Gate 6 分工表): Discussion 七段语义/Methods↔Results 对应/缩写引入/整体质量 → 任何 FAIL 阻断 |
+| `run_gate6.py` + LLM Gate | 33 项 Python auto check: 文件存在/命名/字数/DOI/regex/IMRAD结构 → exit 1 | 4 项 LLM semantic check (见下方 Gate 6 分工表): Discussion 七段语义/Methods↔Results 对应/缩写引入/整体质量 → 任何 FAIL 阻断 |
 
 **编排器正确的 Phase 6 执行命令**:
 ```bash
@@ -625,14 +636,20 @@ cd $MAW_PROJECT_ROOT
 # 步骤 0: 执行前安全扫描 (编排器自动执行, 见编排原则 #12)
 python engine/scripts/run_preflight.py --project-dir . || exit 1
 
-# 步骤 1-2: 图表生成 (项目特定脚本, 由 ml-engineer 维护)
+# 步骤 1: IMRAD 蓝图产出 + 研讨厅评审 (scientific-writer 产出 → PI+biostatistician+clinician 三方评审 → PI 签批)
+# [编排器执行 — 蓝图写作 + Agent 通信, 产出 imrad_blueprint.md + 签批记录]
+
+# 步骤 2-3: 图表生成 (项目特定脚本, 由 ml-engineer 维护)
 python generate_figures.py || exit 1
 python generate_tables.py || exit 1
 
-# 步骤 3: sections 撰写 (编排器调用 scientific-writer Agent, LLM)
-# [编排器执行, 非脚本]
+# 步骤 4: sections 撰写 (编排器调用 scientific-writer Agent, LLM)
+# [编排器执行, 基于签批蓝图, 非脚本]
 
-# 步骤 4: 去 AI 味 (Python regex + LLM 语义)
+# 步骤 5: IMRAD 结构验真 (钱学森模块二: 可靠性工程 — 结构一致性交叉验证)
+python engine/scripts/run_imrad_check.py --project-dir . --blueprint || exit 1
+
+# 步骤 6: 去 AI 味 (Python regex + LLM 语义)
 python run_humanize.py || exit 1
 
 # 步骤 5: 组装投稿层 (纯确定性)
@@ -652,8 +669,11 @@ echo "Phase 7 complete — Gate 7 PASS"
 ```
 
 **编排器错误做法 (已被此机制阻断)**:
+- ❌ 不产出 IMRAD 蓝图直接写 sections → Gate 6 #30 阻断 (蓝图不存在或未签批)
+- ❌ 不触发研讨厅评审就对蓝图签批 → Gate 6 #30 阻断 (签批必须含三方评审意见)
 - ❌ 手动 cp -r sections/ submission/ → `run_assembly.py` 不会创建 sections/，事后 Gate 6 #28 阻断
 - ❌ 手动 cat sections/*.md 但不 strip Classic → `run_assembly.py` 内置 `re.sub(r'\[Classic[^]]*\]', '', text)`
+- ❌ 跳过 IMRAD check → `run_imrad_check.py` 未执行 → heading 层级错误进入 submission → Gate 6 #31-33 阻断
 - ❌ 跳过 humanize → `run_gate6.py` #22 检查禁用词/过渡词 + LLM 语义评估，编排器不可跳过
 - ❌ 口头说 "Gate 6 通过" → 必须 `python run_gate6.py` 返回 exit 0
 - ❌ 只用 Python regex 检查去 AI 味 (没有 LLM) → 表面替换 "however→but" 可通过 regex，但句子仍机械 → LLM 语义评估捕获

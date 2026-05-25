@@ -59,7 +59,7 @@ def main():
     parser.add_argument("--analyze-output", default=None, help="运行报告输出文件 (默认 stdout)")
     parser.add_argument("--analyze-json", action="store_true", help="运行报告以 JSON 格式输出")
     parser.add_argument("--division", "-d", default="all",
-                        choices=["all", "geriatrics", "urology"],
+                        choices=["all", "geriatrics", "urology", "pediatrics"],
                         help="限定事业部 (默认: all, 用于 kb_enrich 等工作流)")
     parser.add_argument("--resume", "-r", default=None, metavar="PROJECT_ID",
                         help="续传已存在的项目 (从中断点继续)")
