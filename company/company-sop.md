@@ -117,6 +117,46 @@ Phase 0 (总体设计) → Phase 1 (问题定义) → Gate 1 → Phase 2 (方案
 ```
 
 Phase 0 由编排器自身执行总体设计师角色，产出《系统设计说明书》(SDS)，定义子系统分解、接口规范、反馈触发条件和关键假设风险，为后续所有 Phase 提供蓝图。
+
+#### SAP 决策分类规范 (Phase 2 研讨厅强制)
+
+Phase 2 产出 SAP 时，必须将每项分析决策分为两类：
+
+| 分类 | 标记 | 定义 | 变更流程 |
+|------|:--:|------|---------|
+| **硬性预设** | ◆ | 不可在执行阶段变更的核心决策 | 必须经 PI 签批的正式 CR |
+| **可调参数** | ◇ | 可在预定范围内优化的技术参数 | 记录调整值及理由即可 |
+
+**硬性预设必须包含**:
+- 主要模型身份 (如 "XGBoost 为预指定主要模型")
+- 主要结局定义 (如 "KDIGO Stage ≥1, 入院24h后至7天内")
+- 验证策略 (如 "5-fold stratified CV + temporal split")
+- 主要对比 (如 "vs PIM-3 / vs Logistic Regression")
+
+**可调参数示例**: 超参数网格范围、特征选择阈值、SMOTE 采样比例
+
+#### 队列筛选文档规范 (Phase 2/3 强制)
+
+Phase 2 (SAP) 必须定义每条纳入/排除标准（含 inclusion/exclusion 类型标注）。
+
+Phase 3 (执行) 必须产出 `cohort_attrition.json`，每条 Methods 纳排标准对应一个 step:
+
+```json
+{
+  "steps": [{
+    "criterion": "ICU LOS >= 48 hours",
+    "criterion_type": "inclusion",
+    "maps_to_methods": "Study Population: ICU stay >= 48h",
+    "n_before": 12881, "n_excluded": 5893, "n_after": 6988
+  }],
+  "final_n": 4430
+}
+```
+
+- 缺失标准 → Gate 3 FAIL (`check_cohort_attrition_completeness`)
+- Phase 6 Results: 排除原因必须从 `n_excluded` 降序排列派生，纳入失败与排除命中区分表述
+- Gate 6 自动验证 (`check_results_exclusion_text_consistency`)
+
 Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化为临床医生可用的交互式 Web 工具并打包为独立可执行文件。
 
 ⚠️ 关键约束: 外部验证 (Phase 4) 必须在论文撰写 (Phase 6) 之前，不可颠倒。
@@ -142,8 +182,9 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 1 | AUC ≥ 0.70 | auto | 主要模型 AUC ≥ 0.70 (分类任务) |
 | 2 | Baseline 包含 | auto | 输出含 LR 或 Cox PH baseline |
 | 3 | n_jobs 安全 | auto | n_jobs ≤ 2, 无 OOM 风险 |
-| 4 | 模型层级合理 | llm | PI 确认模型选择正确 (baseline → 复杂模型) |
-| 5 | 可解释性完整 | llm | SHAP + 方向确认 + 公平性评估 |
+| 4 | 队列筛选完整性 | auto | `check_cohort_attrition_completeness`: 每条 Methods 纳排标准在 cohort_attrition 中有对应步骤 |
+| 5 | 模型层级合理 | llm | PI 确认模型选择正确 (baseline → 复杂模型) |
+| 6 | 可解释性完整 | llm | SHAP + 方向确认 + 公平性评估 |
 
 #### Gate 5 — 审查
 
@@ -183,6 +224,9 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 21 | Discussion 四段完整 | auto | ¶1-¶4 空行分隔，¶4 无结论性收束句 |
 | 22 | Methods↔Results 1:1 | llm | PI 确认无遗漏 |
 | 23 | 数值可追溯 | llm | 所有数字标注来源 Agent |
+| 24 | Methods 因果方向 | auto | `check_methods_no_result_language`: Methods 不含事后绩效断言 |
+| 25 | SAP↔Methods 一致性 | auto | `check_sap_methods_consistency`: SAP 预设 = Methods 声明 或 有正式 CR |
+| 26 | Results 排除原因可追溯 | auto | `check_results_exclusion_text_consistency`: 排除原因从 cohort_attrition n_excluded 派生 |
 
 #### Gate 7 — 临床工具部署
 
@@ -296,4 +340,51 @@ project_source: glp1-sarcopenia-weight-cycling-review
 - 所有临床声明须经对应事业部 clinical-researcher 审查
 - 所有参考文献 DOI 须验证
 - **参考文献优先近 5 年文献, ≥80% 须为近 5 年内发表** (经典方法学文献不在此限)
+
+### 6.3 Methods 因果方向原则
+
+**Methods 只能从 SAP 往下推，不能从 Results 往回看。** 这是 IMRaD 结构完整性的底线。
+
+**规则**:
+- Methods 中每一条分析方法声明，必须能在 SAP（Phase 2 产出）中找到预设依据
+- Methods 禁止包含对执行结果的回溯引用：
+  - ❌ "RF was designated as primary based on superior calibration" — 事后绩效理由
+  - ❌ "preliminary analyses showed/indicated/revealed" — 引用执行结果
+  - ❌ "outperformed/demonstrated superior/showed better" — 模型间比较断言
+- ✅ 正确写法: "XGBoost was pre-specified as the primary model" — 引用 SAP 预设
+- ✅ 正确写法: "Random Forest was included as a comparator model for its ability to..." — 方法论理由（见到数据前也成立）
+
+**执行**:
+- Gate 6 的 `check_methods_no_result_language` 自动扫描 Methods 文本
+- 命中 → FAIL → 必须将事后理由移至 Discussion 或将 Methods 回退至 SAP 预设
+- 此原则适用于所有事业部、所有项目类型
+
+**与 SAP 的关系**:
+- SAP（Phase 2）定义硬性预设 → Methods（Phase 6）照此描述 → 执行（Phase 3）按预设运行
+- 若执行中发现预设模型表现不如对照 → 这本身就是有价值的结果，在 Discussion 中讨论，不在 Methods 中改写预设
+
+### 6.4 指南溯源原则 (OEMC-R11)
+
+**任何声称来自外部指南/标准的定义，其措辞必须可在指南原文中找到对应字句。本研究的操作化偏离必须在独立句子中说明。**
+
+规则:
+- `"defined according to [guideline] (...)"` → 括号内只写指南原文定义，不添加本研究操作化
+- ❌ `"AKI was defined according to KDIGO criterion (≥1.5× baseline within 7 days, excluding the first 24 hours)"`
+  → `excluding the first 24 hours` 不在 KDIGO 原文中
+- ✅ `"AKI was defined according to the KDIGO criterion (≥1.5× baseline within 7 days). In this study, we operationalized the criterion as follows: ..."`
+- 操作化偏离指南 → 必须在 SAP Phase 2 的 Outcome Operationalization 对照表中记录，并给出理由
+- Phase 5 clinical-researcher 审查必须逐条核验指南引用措辞
+- Gate 6 `check_guideline_attribution_accuracy` 自动扫描违反项
+
+### 6.5 结局操作化规范 (OEMC-R11)
+
+Phase 2 SAP 必须包含结构化结局操作化对照表:
+
+| 指南原文 | 本研究操作化 | 差异 | 理由 |
+|---------|------------|------|------|
+| KDIGO: SCr ≥1.5× baseline within 7 days | 同左, 7天内 | 无 | — |
+| KDIGO: baseline = lowest known SCr | 入院24h内最低值 | 收窄 | PIC 无入院前 SCr 数据 |
+| KDIGO: within 7 days | 入院24h后至第7天 | 排除前24h | 排除prevalent AKI |
+
+- Gate 2 `check_outcome_operationalization_table` 强制验证
 - 所有数值须可追溯到上游分析输出

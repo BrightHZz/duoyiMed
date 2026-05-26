@@ -409,6 +409,19 @@ FEEDBACK_B_TRIGGERS = {
             "action": "notify_pi",
             "message": "写作阶段发现研究定义不够清晰, 建议 PI 补充",
         },
+        "methods": {
+            "design": {
+                "signals": [
+                    "SAP 预设主要模型与 Methods 不一致",
+                    "primary model mismatch with SAP",
+                    "无 CR 记录模型切换",
+                    "model switch without CR",
+                ],
+                "severity": "critical",
+                "action": "reopen_gate",
+                "message": "Methods 中 primary model 声明与 SAP 预设不一致且无正式 CR → 返回 Phase 2 补交 CR 或回到 SAP 预设 (OEMC-R9: Methods 因果方向原则)",
+            },
+        },
     },
     # 🆕 全局触发 #7: 脚本崩溃检测 (2026-05-12 新增)
     # 任何 Phase 脚本崩溃且根因是内存安全违规 → 扫描同项目所有 .py
@@ -436,7 +449,7 @@ FEEDBACK_B_TRIGGERS = {
     },
 }
 
-FEEDBACK_B_COUNT = 10  # 共10条触发规则 (新增: cohort_attrition/data.json 缺失)
+FEEDBACK_B_COUNT = 13  # 共13条触发规则 (新增: #11 evidence-claim lineage, #12 evidence-table spot audit, #13 SAP-Methods 预指定一致性)
 
 
 class ResearchOrchestrator:
@@ -1390,6 +1403,10 @@ then: [回退到哪个 Phase, 做什么修正]
                         "rework_count": rework_cnt + 1,
                         "auto_detected": False, "severity": "normal",
                     })
+                    # 🆕 返工前作废本阶段及下游审查产物
+                    self.baseline_manager.supersede_downstream_reviews(
+                        project_id, phase_id
+                    )
                     # phase_index 不变 → 重新执行本 Phase
 
         # 聚合 → 标记完成
@@ -2667,6 +2684,12 @@ then: [回退到哪个 Phase, 做什么修正]
                     )
                     if self.config.verbose:
                         print(f"  📌 下游基线已作废: {downstream_phase}/{latest['version']}")
+
+            # 🆕 返工下游审查产物作废 (2026-05-26)
+            # 返工后旧的 review-*.md 中引用的基线数值可能已失效
+            self.baseline_manager.supersede_downstream_reviews(
+                project_id, to_phase
+            )
         except Exception as e:
             if self.config.verbose:
                 print(f"  ⚠️ 基线变更处理失败 (不阻塞): {e}")
