@@ -102,7 +102,17 @@ type: literature | project | experiment | concept | method | data_source | dashb
 status: unread | skimmed | read | deep_read | proposed | protocol | execution | writing | submitted | published | draft | reference
 topics: [list]  # 用于 Dataview WHERE contains()
 tags: [list]    # 用于 Obsidian 标签系统
+
+# 文献笔记扩展字段（中央文献库验证元数据）
+pmid: 12345678      # PubMed ID，去重主键
+doi: "10.xxxx/xxx"  # DOI 备用去重键
+source_tier: L1 | L2   # L1=全文已验证, L2=PubMed摘要已验证
+verified_date: 2026-05-25  # 最后验证日期
+direct_quote: "原文关键句"  # 从PubMed摘要或全文中摘录的原句
+project_source: project-id  # 首次入库的项目ID
 ---
 ```
+
+**去重规则**: 入库前检查 `pmid` 或 `doi`，若 vault 中已存在同名文献 → 跳过。若同一文献被多个项目引用，在正文中用 `##` 小节追加新项目的引用场景，不创建重复文件。
 
 Agent 应始终确保：同一字段名在不同文件中保持一致（例如不要在某些文件用 `relevance_score` 在另一些用 `relevance`）。

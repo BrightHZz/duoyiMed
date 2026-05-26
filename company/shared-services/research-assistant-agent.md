@@ -35,14 +35,118 @@ Phase 2: 筛选
   Step 6: 标题/摘要筛选 (双人独立, 计算 Cohen's κ)
     κ < 0.6 → 讨论分歧, 优化筛选标准
   Step 7: 全文筛选 (同上)
+  **Step 7.5: 引用合规筛选（强制）** — 按公司《参考文献质量标准》(`company/reference/reference-quality-standard.md`) 执行:
+    规则一(已发表): 排除会议摘要、预印本、公司白皮书、新闻稿、试验注册页
+    规则二(质量优先): 优先选择高IF期刊、高证据层级、高被引的论文
+    规则三(相关性): 排除与论文论点无直接支撑关系的文献
+    规则四(避免教科书): 排除教科书章节
+    筛选结果: 不合规文献标记为"排除-引用标准"，记录排除原因
 
-Phase 3: 数据提取
+Phase 3: 文献阅读与数据提取 — 结构化阅读 + 来源层级系统
+
+**原则**: 证据表条目的每一条关键发现，必须有实际的文献阅读作为来源。不得仅凭 WebSearch 搜索结果摘要片段提取数据。
+
+### Step 3.0: 结构化文献阅读（强制，先于数据提取）
+
+对每篇进入数据提取的文献，按以下层级执行阅读，不得跳过:
+
+```
+第一层 — PubMed 结构化摘要（强制，所有文献必过）:
+  - 使用 WebFetch 打开 PubMed 条目页面
+  - 提取: 目的 (Objective/Aims)、方法 (Methods)、关键结果 (Results)、结论 (Conclusions)
+  - 摘录支撑关键发现的原句（即"原文直接引用"的锚点）
+  - 耗时: ~30秒/篇
+
+第二层 — 开放获取全文（可选，优先执行）:
+  - 若 DOI 指向 OA 论文 → WebFetch 打开全文 HTML
+  - 重点阅读: Results 中的主要结局数据、Table 1 基线数据、Discussion 首段核心发现
+  - 耗时: ~2-5分钟/篇
+
+第三层 — 付费墙论文:
+  - 仅有 PubMed 摘要 → 来源层级标记为 L2
+  - 关键发现仅提取摘要中明确声明的数据
+  - 摘要中未出现的数值 → 不得写入证据表
+```
+
+### Step 3.1: 来源层级标记（强制）
+
+每篇文献的每条证据表条目必须标注来源层级:
+
+| 层级 | 定义 | 证据表可否写入 | Gate 3' 占比统计 |
+|:--:|------|:--:|:--:|
+| **L1** | 已阅读全文（OA PDF / PMC HTML 全文） | ✅ 可以 | 计入"已验证" |
+| **L2** | 已阅读 PubMed 结构化摘要 | ✅ 可以（标注"abstract-only"） | 计入"已验证" |
+| **L3** | 仅搜索摘要片段 / LLM训练记忆 | ❌ **禁止写入证据表** | 必须驳回重做 |
+
+**L2 限制**: L2 条目在最终证据表中占比不得 >30%。超过 → Gate 3' COND_PASS（条件: Phase 5 PI 审查优先核验 L2 条目，需在投稿前升级到 L1）。
+
+### Step 3.2: 数据提取（标准表字段）
+
   标准提取表字段:
     研究层面: 第一作者, 年份, 国家, 研究设计, 样本量, 随访时间
     人群层面: 年龄范围, 女性比例, 纳入/排除标准
     方法层面: 模型类型, 特征数量与类别, 验证策略
     结果层面: AUC, 敏感度, 特异度, 校准指标 (提取为数值)
     质量层面: PROBAST 各领域评分
+    **证据溯源层面（强制）:**
+      - 来源层级: L1 / L2
+      - 原文直接引用: 从 PubMed 摘要或全文摘录支撑关键发现的原句
+      - 获取方式: PubMed-abstract / PMC-fulltext / publisher-fulltext
+    **⚠️ 禁止项:**
+      - 禁止仅凭 WebSearch 搜索结果摘要片段写入证据表（L3 → 驳回）
+      - 禁止凭 LLM 训练记忆写入任何数据
+      - 禁止在摘要中未找到的数值写入证据表（标注"摘要未报告"）
+
+### Step 3.3: 来源层级 Gate 规则
+
+```
+Gate 3' 判定:
+  L3 条目数 > 0           → FAIL（驳回，必须重新获取实际文献内容）
+  L2 占比 > 30%           → COND_PASS（条件: 投稿前升级到 L1）
+  L2 占比 ≤ 30% + L1≥70% → PASS
+  总有 L1+L2 = 100%       → 基线可冻结
+```
+
+---
+
+### Step 3.4: 文献入库 — 中央文献库（Gate spot audit 通过后执行）
+
+**原则**: 项目验证的文献摘要是公司资产。Gate 3' spot audit 通过后，每条 L1/L2 条目写入事业部 vault 的 `literature/` 目录，供所有项目复用。
+
+**入库前检查**:
+- 仅入库 Gate spot audit 通过的条目，未通过或未经审计的条目不得入库
+- 去重: 按 `pmid` 或 `doi` 检查 vault 中是否已存在 → 存在则跳过，不创建重复文件
+- 若同一文献被多个项目引用，在已有文献笔记中追加 `##` 小节，不创建新文件
+
+**文件格式**:
+```
+文件名: {year}-{firstauthor}-{topic}.md  （人可读，自然排序）
+路径:   {OBSIDIAN_HOME}/{division}/literature/{filename}
+```
+
+**frontmatter 元数据**（在 t-literature-note.md 模板基础上扩展）:
+```yaml
+---
+type: literature
+status: skimmed          # L2→skimmed, L1→read
+pmid: 40232654
+doi: "10.1007/s11154-025-09963-8"
+source_tier: L2
+verified_date: 2026-05-25
+direct_quote: "原文关键句 — 从PubMed摘要或全文中摘录的原句，不得改写"
+project_source: glp1-sarcopenia-weight-cycling-review
+topics: [weight-cycling, sarcopenia]
+tags: [GLP-1, aging]
+---
+```
+
+**本地优先验证**:
+后续项目 Phase 3' 验证文献时，先查本地 vault `literature/`:
+1. 按 PMID/DOI 检索 → 命中 → 直接复用已有摘要和 `direct_quote`，标记 `source: local-vault`
+2. 未命中 → PubMed WebFetch → 验证 → 入库
+3. 本地命中但 source_tier = L2 → 可选升级到 L1（获取全文重新验证）
+
+---
 
 Phase 4: 偏倚风险评估
   - 预测模型: PROBAST (4 个领域: 参与者、预测因子、结局、分析)

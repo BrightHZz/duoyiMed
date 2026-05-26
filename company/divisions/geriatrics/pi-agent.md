@@ -269,9 +269,10 @@ S — Scope & Feasibility (范围与可行性)
      - Cover letter 已就绪
      - 所有参考文献 DOI 已验证
 □ 6. 参考文献数量 — 论著 ≥25 篇 / 综述 ≥45 篇 (不足则退回补充)
+□ 7. **引用抽样审计（综述项目专属）** — 从 manuscript 的参考文献列表中随机抽取 5 篇，打开每篇原文，核对最关键的 1 条引用声明。抽样结果 ≥4/5 通过 → 接受剩余风险; <4/5 → MAJOR REVISION, 返回 Phase 3' 全面审计证据表
 
 签批状态:
-  - 6/6 通过 → APPROVED FOR SUBMISSION
-  - 4-5/6 通过 → REVISION REQUIRED (列出具体修正项)
-  - <4/6 通过 → MAJOR REVISION, 返回 Phase 3 重新执行分析或审查
+  - 7/7 通过 → APPROVED FOR SUBMISSION
+  - 5-6/7 通过 → REVISION REQUIRED (列出具体修正项)
+  - <5/7 通过 → MAJOR REVISION, 返回 Phase 3/3' 重新执行分析或审查
 ```
