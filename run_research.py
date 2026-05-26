@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--model", "-m", default=None, help="LLM 模型名 (默认: claude-sonnet-4-6)")
     parser.add_argument("--provider", "-p", default=None, help="LLM 提供商 (anthropic/deepseek/openai)")
     parser.add_argument("--workflow", "-w", default="auto",
-                        choices=["auto", "new_project", "literature", "paper", "quick", "status", "kb_enrich"],
+                        choices=["auto", "new_project", "literature", "paper", "quick", "status", "kb_enrich", "direction_discovery"],
                         help="工作流类型 (默认: auto 自动判断)")
     parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
     parser.add_argument("--dry-run", action="store_true", help="仅显示编排计划, 不实际调用 LLM")

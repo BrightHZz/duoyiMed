@@ -70,6 +70,16 @@ def check_data_availability_confirmed(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 data-engineer 输出)"
 
 
+def check_review_gap_analysis_exists(outputs: dict, orch) -> tuple:
+    """检查 research-assistant 是否输出了综述缺口分析 (Review-Derived Gaps)"""
+    for agent_id, output in outputs.items():
+        if "research-assistant" in agent_id.lower():
+            if any(kw in output for kw in ["综述缺口", "Review Gap", "Review-Derived", "综述缺口分析"]):
+                return True, "综述缺口分析存在"
+            return False, "缺少综述缺口分析 — research-assistant 未提取高分综述中的缺口方向"
+    return True, "跳过 (无 research-assistant 输出)"
+
+
 def check_data_dictionary_exists(outputs: dict, orch) -> tuple:
     """数据字典已产出: data/data_dictionary.md 存在且包含分类变量编码→标签映射
 
@@ -4757,6 +4767,7 @@ GATE_DEFINITIONS = {
     "problem_definition": {
         "auto_checks": {
             "lit_precheck": check_literature_precheck_exists,
+            "review_gap": check_review_gap_analysis_exists,
             "frame_complete": check_frame_assessment_complete,
             "data_availability": check_data_availability_confirmed,
             "data_dictionary": check_data_dictionary_exists,
