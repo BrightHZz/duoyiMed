@@ -113,7 +113,7 @@ Phase 7: 临床工具部署 ──── Gate 7 ──── clinical-tool-devel
 | **Phase 3** (执行/验证) | shared/ml-engineer | `company/shared-services/ml-engineer-agent.md` (ML 安全规范 10 条 + 评估指标 + Figure 规范) |
 | **Phase 4** (外部验证) | shared/data-engineer + shared/ml-engineer + shared/biostatistician | 跨Phase反馈环B (AUC下降检测) |
 | **Phase 5** (审查) | {div}/clinical-researcher + shared/biostatistician + {div}/pi | 研讨厅辩论 + PI 数据真实性终审 (见 `company/shared-services/data-engineer-agent.md` DAG-R4) |
-| **Phase 6** (论文撰写) | shared/scientific-writer + shared/humanizer + shared/translator | `company/shared-services/scientific-writer-agent.md` (IMRAD + Assembly + 数值精度); Gate 33项检查: `company/management/company-orchestrator.md#phase6-gate`; `company/shared-services/translator-agent.md` (英译中) |
+| **Phase 6** (论文撰写) | shared/scientific-writer + shared/figure-designer + shared/humanizer + shared/translator | `company/shared-services/scientific-writer-agent.md` (IMRAD + Assembly + 数值精度); `company/shared-services/figure-designer-agent.md` (出版级图表); Gate 38项检查: `company/management/company-orchestrator.md#phase6-gate`; `company/shared-services/translator-agent.md` (英译中) |
 | **Phase 7** (临床部署) | shared/clinical-tool-developer | `company/shared-services/clinical-tool-developer-agent.md` (部署流程 6 步 + UI/UX 标准 + 安全免责声明) |
 
 ## 钱学森工程控制论五大模块
@@ -243,6 +243,7 @@ python run_research.py --analyze  # 生成运行状态报告
 | scientific-writer | `company/shared-services/scientific-writer-agent.md` | IMRAD 蓝图、Discussion 七段式、Assembly 规范、数值精度、投稿前检查 |
 | data-engineer | `company/shared-services/data-engineer-agent.md` | DQ-CARE 质量框架、数据真实性 DAG 规则、data_provenance_report.json |
 | humanizer | `company/shared-services/humanizer-agent.md` | 去 AI 味七维改写 (引用 `company/reference/humanizer-rules.md`) |
+| figure-designer | `company/shared-services/figure-designer-agent.md` | 出版级图表生成: PRISMA流程图(graphviz) + 统计图(matplotlib/seaborn) |
 | translator | `company/shared-services/translator-agent.md` | 英文稿件 → 中译稿 (Phase 6 Step 7)，仅供内部阅读 |
 | {div}/pi | `company/divisions/{div}/pi-agent.md` | FRAME 评估、期刊策略、质量终审 |
 | {div}/clinical-researcher | `company/divisions/{div}/clinical-researcher-agent.md` | 临床问题操作化、表型库、临床审查 |

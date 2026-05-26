@@ -700,7 +700,7 @@ safety_config:
   start_method: forkserver
   platform: darwin
 downstream_consumers:
-  - generate_figures.py  # MUST read from cv_results.json, NOT from model object
+  - figure-designer: generate_figures.py  # reads from cv_results.json, NOT from model object
   - sections/05_results.md
   - tables/table2_model_performance.md
 ```
@@ -720,125 +720,17 @@ downstream_consumers:
 - 模型评估报告 (所有指标)
 - 可解释性报告 (to `computational-biologist` + `clinical-researcher`)
 - 特征工程文档 (to 全员复用)
-- Results 部分图表 (to `scientific-writer`)
+- Figure 数据文件 (to `figure-designer` — 由独立 Agent 负责出版级图表生成)
 
-## Figure 生成规范 — 确定性数据源
+## Figure 生成
 
-**核心原则**: 凡是能从数据文件计算的东西，**禁止 LLM 推测或编造**。每个 Figure 的数字必须从指定的结构化文件中读取。
+**本 Agent 不再负责画图。** 模型训练完成后产出数据文件（cv_results.json），Figure 生成由 `shared/figure-designer` 独立负责。
 
-### 数据源对照表
+figure-designer 从以下数据文件读取数字生成出版级图表：
+- Figure 1 → `outputs/cohort_attrition.json`
+- Figures 2-4, S1 → `outputs/cv_results.json`
 
-| Figure | 内容 | 数据源文件 | 读取方式 |
-|--------|------|-----------|---------|
-| Figure 1 | 队列流程图 | `outputs/cohort_attrition.json` | `json.load()` 读取 `steps[]` 数组，每步的 `excluded`/`remaining` |
-| Figure 2 | ROC 曲线 | `models/cv_results.json` | 读取 `models.{name}.auc` 及各 fold 的 FPR/TPR |
-| Figure 3 | 校准曲线 | `models/cv_results.json` | 读取 `models.{name}.calibration_slope`/`calibration_intercept` 及各 fold 的 predicted/observed |
-| Figure 4 | 特征重要性 | `models/cv_results.json` | 读取 `models.{name}.feature_importance` |
-| Figure S1 | 决策曲线 | `models/cv_results.json` | 读取 `models.{name}.dca` 或从预测概率计算 |
-
-### Figure 1 队列流程图 — 强制规则
-
-**🚫 禁止推测筛选数字。** Figure 1 的每个筛选步骤的 N 必须从 `outputs/cohort_attrition.json` 读取。如果该文件不存在，报错退出（`raise FileNotFoundError`），不得用推测值填充。
-
-**🔧 必须使用 graphviz 绘制**，禁止使用 matplotlib 手动画流程图。graphviz 的自动布局引擎生成的流程图线条整齐、对齐专业，matplotlib 手动画流程图效果丑陋不专业。
-
-`cohort_attrition.json` 格式:
-```json
-{
-  "source": "CHARLS 2011-2018",
-  "baseline_n": 7523,
-  "steps": [
-    {"step": 1, "criterion": "Age ≥60", "excluded": 1203, "remaining": 6320},
-    {"step": 2, "criterion": "Non-frail", "excluded": 576, "remaining": 5744},
-    ...
-  ],
-  "final_n": 5432,
-  "event_n": 1428
-}
-```
-
-`generate_figures.py` 中 Figure 1 的代码模板 (graphviz):
-```python
-import json
-from graphviz import Digraph
-
-with open('outputs/cohort_attrition.json') as f:
-    cohort = json.load(f)
-
-dot = Digraph(
-    name='cohort_flow',
-    node_attr={'shape': 'box', 'style': 'rounded', 'fontname': 'Arial'},
-    edge_attr={'fontname': 'Arial', 'fontsize': '9'},
-)
-dot.attr(rankdir='TB', splines='ortho')
-
-# 基线
-dot.node('baseline', f"Baseline participants\n(n = {cohort['baseline_n']:,})")
-
-prev_node = 'baseline'
-for s in cohort['steps']:
-    step_id = f"step{s['step']}"
-    # 排除框 (右侧)
-    dot.node(f"excl{s['step']}", f"Excluded (n = {s['excluded']:,})\n{s['criterion']}",
-             shape='box', style='filled', fillcolor='#f0f0f0')
-    # 剩余框 (下方)
-    dot.node(step_id, f"n = {s['remaining']:,}")
-    
-    dot.edge(prev_node, f"excl{s['step']}", label=f"Excluded\n(n = {s['excluded']:,})")
-    dot.edge(prev_node, step_id, label=f"Remaining\n(n = {s['remaining']:,})")
-    prev_node = step_id
-
-# 最终分析人群
-dot.node('final', f"Final analysis sample\n(n = {cohort['final_n']:,})\nEvents: {cohort['event_n']:,} ({cohort.get('event_rate', 0):.1%})",
-         shape='box', style='filled', fillcolor='#e8f5e9')
-dot.edge(prev_node, 'final')
-
-dot.render('figures/Figure1_cohort-flow-diagram', format='png', dpi=300, cleanup=False)
-dot.render('figures/Figure1_cohort-flow-diagram', format='tiff', dpi=300, cleanup=False)
-```
-
-> **关键点**: graphviz 自动处理节点定位和对齐，matplotlib 流程图需要手动计算每个框的坐标，视觉效果差。Figures 2-4 (ROC/校准/特征重要性) 仍用 matplotlib/seaborn，只有流程图必须用 graphviz。
-
-### Figure data.json — 强制产出
-
-**每个 Figure 必须同时产出对应的 `_data.json` 文件**，用于 Gate 6 数值追踪。这是**强制要求**，不生成 data.json 将导致 Gate 6 FAIL。
-
-| Figure | data.json 文件 | 必须包含的 key |
-|--------|---------------|---------------|
-| Figure 1 | `Figure1_cohort-flow-diagram_data.json` | `baseline_n`, `steps[].excluded`, `steps[].remaining`, `final_n`, `event_n` |
-| Figure 2 | `Figure2_roc-curve_data.json` | `auc`, `auc_ci_low`, `auc_ci_high` — 值与 cv_results.json 一致 |
-| Figure 3 | `Figure3_calibration-plot_data.json` | `brier`, `calibration_slope`, `calibration_intercept` — 值与 cv_results.json 一致 |
-| Figure 4 | `Figure4_feature-importance_data.json` | `feature_importance` — 值与 cv_results.json 一致 |
-
-data.json 的值必须从 cv_results.json 或 cohort_attrition.json **直接读取后写入**，不是从模型对象（`.feature_importances_`）重新提取。
-
-### Figure caption — 必须独立为 .md 文件
-
-**图中禁止出现文字注释描述。** 所有统计量、数值、图例说明必须写入独立的 `Figure[N]_caption.md` 文件，不在图中标注。具体规则:
-
-- ROC 曲线: 图内仅保留图例 (AUC 值可放图例)，完整 caption 写入 `Figure2_roc-curve_caption.md`
-- 校准曲线: 图内无文字注释，caption 写入 `Figure3_calibration-plot_caption.md`
-- SHAP 特征重要性: **禁止在条形末端标注数值** (禁止 `ax.text()`)，完整特征名和 SHAP 值写入 `Figure4_feature-importance_caption.md`
-- 每个 caption.md 文件必须与对应 .png 文件同目录、同前缀命名
-
-### Figure 美学规范 — 强制约束
-
-**所有 matplotlib/seaborn 生成的 Figure (Figure 2-4) 必须遵循以下规范，确保出版级质量：**
-
-1. **Seaborn 样式必须启用**: 每个绘图函数开头调用 `sns.set_style("whitegrid")` + `sns.set_context("paper", font_scale=1.1)`，禁止使用 matplotlib 裸默认样式
-2. **图例必须放在图内右下角**: `ax.legend(loc='lower right', frameon=True, framealpha=0.9, edgecolor='#dddddd')`，禁止使用默认 `legend()` 无参数调用。图例不得与数据线/数据点重叠，必要时用 `borderpad=0.8` 增加内边距
-3. **统一尺寸和分辨率**: `figsize=(7, 5.5)`, `dpi=300`, 保存时 `bbox_inches='tight'`
-4. **统一配色方案**: 主曲线颜色 `#2166ac`，参考线 `k--` + `alpha=0.6`，特征重要性用 `sns.color_palette("Blues_d")` 渐变
-5. **坐标轴美学**:
-   - 轴标签 `fontsize=11`，刻度 `fontsize=10`
-   - Spine 统一浅灰: `spine.set_edgecolor('#cccccc'); spine.set_linewidth(0.5)`
-   - ROC/校准图的 x/y 轴范围统一 `[-0.02, 1.02]`，留白避免线条贴边
-6. **数据点样式 (校准曲线)**: `markersize=7, markerfacecolor='white', markeredgewidth=1.5, markeredgecolor='#2166ac'`，确保空心圆不与图例框重叠
-7. **禁止的写法**:
-   - `ax.plot(..., 'b-')` — 禁止用单字符颜色码，必须用 hex 色值
-   - `ax.legend()` — 无参数调用
-   - `plt.savefig(..., dpi=100)` — 低分辨率
-   - 硬编码中文字体 — 论文图统一英文标签
+详细规范见 `company/shared-services/figure-designer-agent.md`。
 
 ### Phase 3 cohort_attrition.json 产出
 
