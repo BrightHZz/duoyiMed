@@ -119,7 +119,7 @@ Phase 7: 临床工具部署 ──── Gate 7 ──── clinical-tool-devel
 ## 钱学森工程控制论五大模块
 
 ### 模块一: 闭环反馈控制
-三层反馈回路: A环 (阶段内 Gate FAIL→返工) | B环 (跨Phase自动检测, 12条触发规则, 含综述全链路证据追溯) | C环 (趋势监控 Δ-AUC < -0.05 预警)
+三层反馈回路: A环 (阶段内 Gate FAIL→返工) | B环 (跨Phase自动检测, 17条触发规则, 含综述全链路证据追溯) | C环 (趋势监控 Δ-AUC < -0.05 预警)
 
 **B环触发规则 #11 — 综述证据-声明断裂 (manuscript→证据表)**:
 - 触发条件: Gate 6 `check_evidence_claim_lineage` 发现 manuscript 中存在证据表中无对应条目的数值声明
@@ -132,6 +132,41 @@ Phase 7: 临床工具部署 ──── Gate 7 ──── clinical-tool-devel
 - 信号: 随机抽取的证据表条目中 ≥1 条的「关键发现」描述与原文不符
 - 动作: 创建变更请求 `CR-evidence-source-mismatch-{project_id}` → 标记受影响条目为"待修正" → 重新打开原文逐条修正证据表 → 若该条目已被 manuscript 引用则同步修正 manuscript → 重新执行 Gate 3'
 - 严重度: critical (证据表是综述项目的基线，基线错误 = 下游全部不可信)
+
+**B环触发规则 #13 — SAP-Methods 预设偏差 (SAP→Methods)**:
+- 触发条件: Gate 6 `check_sap_methods_consistency` 发现 SAP `◆硬性预设` 与 Methods 声明不一致且无正式 CR
+- 信号: SAP 预指定的主要模型/结局/验证策略在 Methods 中被替换或未声明
+- 动作: 创建 `CR-sap-methods-mismatch-{project_id}` → Phase 2 返工补交 CR 记录 → 重新执行 Gate 6
+- 严重度: critical (Methods 因果方向断裂，OEMC-R9 违反)
+- 来源: OEMC-R9 (2026-05-26)
+
+**B环触发规则 #14 — 纳排标准-队列筛选断裂 (Methods→cohort_attrition)**:
+- 触发条件: Gate 3 `check_cohort_attrition_completeness` 发现 Methods 纳排标准在 cohort_attrition.json 中缺失对应 step
+- 信号: Methods 中声明的 inclusion/exclusion criterion 在 cohort_attrition 中无 maps_to_methods 对应
+- 动作: Phase 3 返工 → 数据工程师补全 cohort_attrition → 重新 Gate 3
+- 严重度: high (纳排标准不可追溯，OEMC-R10 违反)
+- 来源: OEMC-R10 (2026-05-26)
+
+**B环触发规则 #15 — 参考文献孤儿引用 (References→正文声明)**:
+- 触发条件: Gate 6 `check_reference_claim_mapping` 发现 ≥5 篇文献在 References 中存在但无正文声明映射
+- 信号: reference-claim-mapping.md 中缺失对应条目
+- 动作: 创建 `CR-ref-orphan-{project_id}` → Phase 6 返工: 补 mapping 或移除无关文献 → 重新 Gate 6
+- 严重度: critical (参考文献可能为满足指标而堆砌，不直接支撑论文论点)
+- 来源: OEMC-R12 (2026-05-26), 《参考文献质量标准》规则三
+
+**B环触发规则 #16 — 参考文献来源层级违规 (mapping→PubMed)**:
+- 触发条件: Gate 6 `check_reference_source_tier` 发现 L3 条目 或 spot audit 发现声明与原文不符
+- 信号: source_tier == L3（未实际阅读），或 spot audit 抽检条目缺少 verified_date/pmid
+- 动作: 创建 `CR-ref-source-mismatch-{project_id}` → 全量核查参考文献 → 通过 PubMed WebFetch 补验所有 L3/L2 条目 → 修正 mapping 和 manuscript → 重新 Gate 6
+- 严重度: critical (参考文献可能为 LLM 编造，OEMC-R6 违反)
+- 来源: OEMC-R13 (2026-05-26), 《参考文献质量标准》规则五
+
+**B环触发规则 #17 — 跨项目参考文献伪造模式传播**:
+- 触发条件: 一个项目的 B环 #16 spot audit 发现伪造/错误文献 → 注入 lessons-learned
+- 信号: 后续项目执行 `check_lesson_rules_compliance` 时匹配到已知伪造模式（如特定编造 DOI 前缀、不存在的作者组合）
+- 动作: 自动阻断 → 要求 research-assistant 通过 PubMed WebFetch 验证该文献 → 验证通过则放行，不通过则移除
+- 严重度: high (防止同一伪造模式污染多个项目的参考文献列表)
+- 来源: 知识管理部 + 编排原则 #17 (经验规则自动传播) + OEMC-R13
 
 ### 模块二: 可靠性工程
 LLM容错 (指数退避+降级+断点续传) | 一致性交叉验证 (clinical↔data↔writer↔PI) | 执行前安全扫描。ML 内存安全规范见 `company/shared-services/ml-engineer-agent.md`。

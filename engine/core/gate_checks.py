@@ -1026,6 +1026,311 @@ def check_all_refs_cited_in_text(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 scientific-writer 输出)"
 
 
+def check_reference_claim_mapping(outputs: dict, orch) -> tuple:
+    """每篇参考文献必须在 reference-claim-mapping.md 中有对应的正文声明映射
+
+    OEMC-R12: 参考文献-声明可追溯原则。
+    每篇文献 [N] 必须有一个对应的正文声明摘要，证明该文献直接支撑论文论点。
+
+    reference-claim-mapping.md 格式:
+      [1] SOFA 评分原始定义, 本研究的对照评分标准
+      [2] Rockwood 缺陷累积模型, eFI 的核心方法学基础
+      ...
+
+    违规判定:
+    - mapping 文件不存在 → FAIL (阻断, 必须生成)
+    - References 中存在 [N] 但 mapping 中无对应条目 → FAIL (孤儿引用, 可能为无关堆砌)
+    - mapping 中的 [N] 在 References 中不存在 → FAIL (指向不存在文献)
+    """
+    import re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        project_id = getattr(orch, '_current_project_id', None)
+        if project_id:
+            project_dir = _find_project_dir(orch, project_id)
+    if not project_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    base = Path(project_dir)
+    mapping_path = base / "reference-claim-mapping.md"
+
+    # 1. 检查 mapping 文件是否存在
+    if not mapping_path.exists():
+        return False, (
+            "OEMC-R12 阻断: reference-claim-mapping.md 不存在。\n"
+            "编排器必须在 Phase 6 写作过程中生成此文件，记录每篇参考文献对应的正文声明。\n"
+            "格式: [N] 正文声明一句话摘要 (每行一条)"
+        )
+
+    mapping_text = mapping_path.read_text(encoding='utf-8')
+
+    # 2. 从 mapping 中提取声明编号
+    mapping_numbers = set()
+    for m in re.finditer(r'^\s*\[(\d+)\]', mapping_text, re.MULTILINE):
+        mapping_numbers.add(int(m.group(1)))
+
+    if not mapping_numbers:
+        return False, (
+            "reference-claim-mapping.md 存在但未包含任何 [N] 格式的声明映射。\n"
+            "格式: [N] 正文声明一句话摘要 (每行一条)"
+        )
+
+    # 3. 从 manuscript 的 References 章节提取引用编号
+    manuscript_path = base / "submission" / "manuscript.md"
+    if not manuscript_path.exists():
+        # fallback: 尝试从 outputs 或 section 中获取
+        ref_section_path = base / "sections" / "07_references.md"
+        if ref_section_path.exists():
+            ref_text = ref_section_path.read_text(encoding='utf-8')
+        else:
+            return True, "跳过 (无 manuscript.md 或 references section)"
+    else:
+        manuscript = manuscript_path.read_text(encoding='utf-8')
+
+        # 找 References 章节
+        ref_match = re.search(
+            r'(?:##\s*References?|##\s*参考文献)\s*\n',
+            manuscript, re.IGNORECASE
+        )
+        if not ref_match:
+            return True, "跳过 (manuscript 中无 References 章节)"
+        ref_text = manuscript[ref_match.start():]
+
+    # 从 References 章节提取编号
+    ref_numbers = set()
+    # 匹配 "1. Author..." 或 "[1] Author..." 或 "1 Author..." 开头的条目
+    for m in re.finditer(r'(?:^|\n)\s*(?:\[(\d+)\]|(\d+)\.)\s+\w', ref_text):
+        num = m.group(1) or m.group(2)
+        ref_numbers.add(int(num))
+
+    if not ref_numbers:
+        return True, "跳过 (References 中未检测到编号条目)"
+
+    # 4. 双向比较
+    orphan_refs = ref_numbers - mapping_numbers  # 在 Reference 中但 mapping 中无
+    phantom_claims = mapping_numbers - ref_numbers  # 在 mapping 中但 Reference 中无
+
+    violations = []
+    if orphan_refs:
+        sorted_orphan = sorted(orphan_refs)
+        violations.append(
+            f"{len(orphan_refs)} 篇文献在 References 中存在但无正文声明映射: "
+            f"[{', '.join(str(n) for n in sorted_orphan[:15])}"
+            + (f", ...等{len(orphan_refs)}篇" if len(orphan_refs) > 15 else "]")
+            + "\n  → 这些文献可能为满足数量/时效性指标而堆砌的无关文献。"
+            + "\n  → 请逐条核对: 每篇是否直接支撑正文的某个具体声明？若是，补入 mapping；若否，从 References 移除。"
+        )
+    if phantom_claims:
+        sorted_phantom = sorted(phantom_claims)
+        violations.append(
+            f"{len(phantom_claims)} 条声明映射指向 References 中不存在的文献: "
+            f"[{', '.join(str(n) for n in sorted_phantom[:10])}]"
+            + "\n  → 编号不一致或文献被删除后 mapping 未同步更新"
+        )
+
+    if violations:
+        return False, (
+            f"OEMC-R12 阻断: 参考文献-声明可追溯不通过。\n"
+            f"References: {len(ref_numbers)} 篇, Mapping: {len(mapping_numbers)} 条\n\n"
+            + "\n".join(f"  • {v}" for v in violations)
+        )
+
+    return True, (
+        f"参考文献-声明映射通过: References {len(ref_numbers)} 篇 ↔ Mapping {len(mapping_numbers)} 条, "
+        f"孤儿引用 0, 幽灵声明 0 ✓"
+    )
+
+
+def check_reference_source_tier(outputs: dict, orch) -> tuple:
+    """每篇参考文献的 source_tier 必须 ≥L2, L3 阻断, L2 >30% → COND_PASS
+
+    OEMC-R13: 参考文献来源层级原则（通用）。
+    扫描 reference-claim-mapping.md 每行的 source_tier 字段。
+    """
+    import re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        project_id = getattr(orch, '_current_project_id', None)
+        if project_id:
+            project_dir = _find_project_dir(orch, project_id)
+    if not project_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    base = Path(project_dir)
+    mapping_path = base / "reference-claim-mapping.md"
+
+    if not mapping_path.exists():
+        return True, "跳过 (无 reference-claim-mapping.md)"
+
+    mapping_text = mapping_path.read_text(encoding='utf-8')
+
+    entries = []
+    for line in mapping_text.strip().split('\n'):
+        line = line.strip()
+        if not line or not re.match(r'^\s*\[', line):
+            continue
+        entries.append(line)
+
+    if not entries:
+        return True, "跳过 (mapping 中无条目)"
+
+    l1_count = 0
+    l2_count = 0
+    l3_entries = []
+    no_tier = []
+
+    for i, line in enumerate(entries):
+        tier_match = re.search(r'source_tier\s*:\s*(L[123])', line, re.IGNORECASE)
+        if tier_match:
+            tier = tier_match.group(1).upper()
+            if tier == 'L1':
+                l1_count += 1
+            elif tier == 'L2':
+                l2_count += 1
+            elif tier == 'L3':
+                l3_entries.append(i + 1)
+        else:
+            no_tier.append(i + 1)
+
+    total = len(entries)
+
+    violations = []
+    if l3_entries:
+        violations.append(
+            f"L3 阻断 (未实际阅读): 条目 #{', #'.join(str(n) for n in l3_entries[:10])}"
+            + (f", ...共 {len(l3_entries)} 条" if len(l3_entries) > 10 else "")
+            + "\n  → L3 = 仅凭 LLM 记忆/搜索片段, 未获取实际文献内容"
+            + "\n  → 必须通过 PubMed WebFetch 获取摘要 (L2) 或全文 (L1) 后重新标注"
+        )
+
+    if no_tier:
+        violations.append(
+            f"缺少 source_tier 标注: 条目 #{', #'.join(str(n) for n in no_tier[:10])}"
+            + (f", ...共 {len(no_tier)} 条" if len(no_tier) > 10 else "")
+            + "\n  → 格式: [N] 声明 | source_tier: L1|L2 | verified_date: YYYY-MM-DD | pmid: XXXXXXXX"
+        )
+
+    if violations:
+        return False, (
+            f"OEMC-R13 阻断: 参考文献来源层级不通过 (共 {total} 条)。\n\n"
+            + "\n".join(f"  • {v}" for v in violations)
+        )
+
+    # All pass: check L2 ratio
+    l2_ratio = l2_count / total if total > 0 else 0
+    if l2_ratio > 0.30:
+        return True, (
+            f"来源层级 COND_PASS: L1={l1_count} ({l1_count/total*100:.0f}%), "
+            f"L2={l2_count} ({l2_ratio*100:.0f}% > 30%), L3=0"
+            + "\n  → L2 占比超限, 条件注入 Phase 5 PI 审查"
+        )
+
+    return True, (
+        f"来源层级通过: L1={l1_count} ({l1_count/total*100:.0f}%), "
+        f"L2={l2_count} ({l2_ratio*100:.0f}% ≤ 30%), L3=0 ✓"
+    )
+
+
+def check_reference_spot_audit(outputs: dict, orch) -> tuple:
+    """随机抽检 reference-claim-mapping.md, 验证来源层级标注的真实性
+
+    OEMC-R13 spot audit。
+    抽取 N = max(3, 15%×条目总数) 条, 检查是否标注了 verified_date + pmid/doi。
+    缺少审计痕迹 → 视为「未经原文验证」→ 计入未验证比例。
+    未验证比例 >20% → COND_PASS。
+    """
+    import re
+    import random
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        project_id = getattr(orch, '_current_project_id', None)
+        if project_id:
+            project_dir = _find_project_dir(orch, project_id)
+    if not project_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    base = Path(project_dir)
+    mapping_path = base / "reference-claim-mapping.md"
+
+    if not mapping_path.exists():
+        return True, "跳过 (无 reference-claim-mapping.md)"
+
+    mapping_text = mapping_path.read_text(encoding='utf-8')
+
+    entries = []
+    for line in mapping_text.strip().split('\n'):
+        line = line.strip()
+        if not line or not re.match(r'^\s*\[', line):
+            continue
+        entries.append(line)
+
+    if not entries:
+        return True, "跳过 (mapping 中无条目)"
+
+    total = len(entries)
+    sample_n = max(3, int(total * 0.15))
+    sample_n = min(sample_n, total)
+
+    # Deterministic selection seeded by project_id
+    seed = hash(str(base))
+    rng = random.Random(seed)
+    sampled_indices = sorted(rng.sample(range(total), sample_n))
+
+    missing_pmid = []
+    missing_date = []
+    for idx in sampled_indices:
+        line = entries[idx]
+        has_pmid = bool(re.search(r'pmid\s*:\s*\d+', line, re.IGNORECASE))
+        has_doi = bool(re.search(r'doi\s*:\s*10\.', line, re.IGNORECASE))
+        has_date = bool(re.search(r'verified_date\s*:\s*\d{4}-\d{2}-\d{2}', line))
+
+        if not has_pmid and not has_doi:
+            missing_pmid.append(idx + 1)
+        if not has_date:
+            missing_date.append(idx + 1)
+
+    unverifiable = set(missing_pmid) | set(missing_date)
+    unverified_ratio = len(unverifiable) / sample_n if sample_n > 0 else 0
+
+    details = []
+    if missing_pmid:
+        details.append(
+            f"{len(missing_pmid)}/{sample_n} 条缺少 pmid/doi: "
+            f"#{', #'.join(str(n) for n in missing_pmid[:10])}"
+        )
+    if missing_date:
+        details.append(
+            f"{len(missing_date)}/{sample_n} 条缺少 verified_date: "
+            f"#{', #'.join(str(n) for n in missing_date[:10])}"
+        )
+
+    if unverified_ratio > 0.20:
+        return True, (
+            f"Spot audit COND_PASS: 抽检 {sample_n}/{total} 条, "
+            f"审计痕迹缺失 {len(unverifiable)}/{sample_n} ({unverified_ratio*100:.0f}% > 20%)"
+            + ("\n  • " + "\n  • ".join(details) if details else "")
+            + "\n  → 未经验证的条目超过 20%, 条件注入 Phase 5 PI 审查"
+        )
+
+    if details:
+        return True, (
+            f"Spot audit PASS: 抽检 {sample_n}/{total} 条, "
+            f"审计痕迹缺失 {len(unverifiable)}/{sample_n} ({unverified_ratio*100:.0f}% ≤ 20%) ✓"
+            + ("\n  • " + "\n  • ".join(details) if details else "")
+        )
+
+    return True, (
+        f"Spot audit PASS: 抽检 {sample_n}/{total} 条, "
+        f"全部有 verified_date + pmid/doi, 审计痕迹完整 ✓"
+    )
+
+
 def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
     """Discussion 七段结构检测 — 按空行拆段, ≥6段 + ¶3/¶4含文献引用 + ¶7含局限"""
     for agent_id, output in outputs.items():
@@ -4893,6 +5198,9 @@ GATE_DEFINITIONS = {
             "sap_methods_consistency": check_sap_methods_consistency,            # 2026-05-26: SAP↔Methods 预指定一致性
             "results_exclusion_text_consistency": check_results_exclusion_text_consistency,  # 2026-05-26: OEMC-R10 排除原因可追溯
             "guideline_attribution_accuracy": check_guideline_attribution_accuracy,  # 2026-05-26: OEMC-R11 指南溯源
+            "reference_claim_mapping": check_reference_claim_mapping,              # 2026-05-26: OEMC-R12 参考文献-声明可追溯
+            "reference_source_tier": check_reference_source_tier,                  # 2026-05-26: OEMC-R13 来源层级 L3阻断
+            "reference_spot_audit": check_reference_spot_audit,                    # 2026-05-26: OEMC-R13 随机抽检
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

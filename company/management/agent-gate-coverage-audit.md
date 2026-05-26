@@ -58,6 +58,9 @@
 | 21 | AI 写作模式检查 (18 项禁用词) | scientific-writer | `check_humanize_quality` 🆕 | writing |
 | 22 | Humanize 清单 (过渡词/hedge/标语) | scientific-writer | `check_humanize_quality` 🆕 | writing |
 | 23 | 去 AI 味改写执行 | scientific-writer | `check_humanize_quality` 🆕 + humanizer agent | writing |
+| 24 | 参考文献相关性 (每篇须有正文声明映射) | reference-quality-standard | `check_reference_claim_mapping` 🆕 | writing |
+| 25 | 参考文献来源层级 (L3→阻断) | reference-quality-standard 规则五 | `check_reference_source_tier` 🆕 | writing |
+| 26 | 参考文献抽检 (N=15%) | reference-quality-standard 规则五 | `check_reference_spot_audit` 🆕 | writing |
 
 ## 四、⚠️ LLM-ONLY (仅靠 PI 审查，非确定性检查)
 

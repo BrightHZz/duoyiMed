@@ -227,6 +227,9 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 24 | Methods 因果方向 | auto | `check_methods_no_result_language`: Methods 不含事后绩效断言 |
 | 25 | SAP↔Methods 一致性 | auto | `check_sap_methods_consistency`: SAP 预设 = Methods 声明 或 有正式 CR |
 | 26 | Results 排除原因可追溯 | auto | `check_results_exclusion_text_consistency`: 排除原因从 cohort_attrition n_excluded 派生 |
+| 27 | 参考文献-声明映射 | auto | `check_reference_claim_mapping`: 每篇文献在 reference-claim-mapping.md 中有正文声明，无孤儿引用 |
+| 28 | 参考文献来源层级 | auto | `check_reference_source_tier`: L3 → FAIL, L2 >30% → COND_PASS |
+| 29 | 参考文献抽检 | auto | `check_reference_spot_audit`: N=max(3,15%×refs) 审计痕迹核查 |
 
 #### Gate 7 — 临床工具部署
 
