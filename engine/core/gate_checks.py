@@ -5064,6 +5064,7 @@ def check_table1_content_completeness(outputs: dict, orch) -> tuple:
     return True, f"Table 1 内容填充率 100% ({total_cells} 个单元格全部有值)"
 
 
+
 # ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================

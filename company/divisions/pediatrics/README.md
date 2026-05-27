@@ -30,6 +30,7 @@
 | Tier 2 | 5-10 | Pediatrics, The Journal of Pediatrics, Archives of Disease in Childhood, Pediatric Critical Care Medicine |
 | Tier 3 | 2-5 | European Journal of Pediatrics, BMC Pediatrics, Frontiers in Pediatrics |
 
+
 ## 路由关键词
 
 编排器根据用户输入中的关键词自动路由到本事业部:
@@ -43,6 +44,7 @@
 - 川崎病, Kawasaki, 手足口病, HFMD
 - 儿童肺炎, pediatric pneumonia, 儿童哮喘, pediatric asthma
 - 儿童感染, pediatric infection
+
 
 ## 知识库
 
