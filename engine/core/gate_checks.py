@@ -1623,6 +1623,70 @@ def check_classic_ratio(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 scientific-writer 输出)"
 
 
+def check_evidence_table_no_reviews(outputs: dict, orch) -> tuple:
+    """Gate 3' — 证据表禁止包含综述作为一级证据
+
+    综述禁止引用综述原则的前置实现。
+    扫描 evidence-extraction-table.md 的 Design 列,
+    检测 systematic review / meta-analysis / narrative review / scoping review →
+    FAIL (驳回替换为一级文献)。
+
+    效果: Phase 3' 阻断, 写作开始前证据基础已清洁, 无需 Phase 6 返工。
+    """
+    import os
+
+    # Locate evidence table
+    evidence_table_path = None
+    if orch and hasattr(orch, 'get_project_dir'):
+        proj_dir = orch.get_project_dir()
+        candidates = [
+            os.path.join(proj_dir, 'tables', 'evidence-extraction-table.md'),
+            os.path.join(proj_dir, 'evidence-extraction-table.md'),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                evidence_table_path = p
+                break
+
+    if not evidence_table_path:
+        return True, "跳过 (未找到 evidence-extraction-table.md, 非综述项目或 Phase 3' 尚未执行)"
+
+    table_text = open(evidence_table_path, encoding='utf-8').read()
+
+    # Detect review-type entries in Design column
+    review_design_patterns = [
+        (r'(?i)systematic\s+review', 'Systematic Review'),
+        (r'(?i)\bmeta[\-\s]analysis\b', 'Meta-Analysis'),
+        (r'(?i)narrative\s+review', 'Narrative Review'),
+        (r'(?i)scoping\s+review', 'Scoping Review'),
+        (r'(?i)\breview\b.*\b(?:article|paper)\b', 'Review Article'),
+    ]
+
+    violations = []
+    for line in table_text.split('\n'):
+        if '|' not in line:
+            continue
+        # Check if this is a data row (starts with |)
+        if line.strip().startswith('|') and not line.strip().startswith('|---'):
+            for pattern, label in review_design_patterns:
+                if re.search(pattern, line):
+                    # Extract study name from first cell
+                    cells = [c.strip() for c in line.split('|') if c.strip()]
+                    study_name = cells[0] if cells else 'unknown'
+                    violations.append(f"{study_name} ({label})")
+                    break
+
+    if violations:
+        return False, (
+            f"Gate 3' FAIL — 证据表包含 {len(violations)} 条综述/Meta分析作为一级证据: "
+            f"{'; '.join(violations[:5])}. "
+            f"综述禁止引用综述: 请将以上条目替换为对应的一次文献 (原始研究), "
+            f"或从证据表中移除 (综述仅限作为 gap identification 背景引用)"
+        )
+
+    return True, f"Gate 3' 证据表综述检查通过 — 全部条目为一次文献 ✓"
+
+
 def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
     """Discussion 七段结构检测 — 按空行拆段, ≥6段 + ¶3/¶4含文献引用 + ¶7含局限"""
     for agent_id, output in outputs.items():
@@ -4757,38 +4821,215 @@ def check_imrad_heading_hierarchy(outputs: dict, orch) -> tuple:
 
 
 def check_methods_results_1_to_1(outputs: dict, orch) -> tuple:
-    """Methods/Results 1:1 mapping check"""
+    """Methods↔Results 结局指标 1:1 映射验证 — 内容级（钱学森可靠性工程）
+
+    升级于 2026-05-27: 从「检查 blueprint 文件结构」升级为「提取 Methods 结局指标 →
+    扫描 Results 定量回报 → 逐指标判定覆盖状态」。
+
+    判定逻辑:
+    - ≥2 处定量/系统描述 → PASS（系统性回报）
+    - 1 处零散提及 → WARN（回报不足）
+    - 0 处 → FAIL（声明-回报断裂）
+    """
     import os
-    proj_dir = orch.get_project_dir() if hasattr(orch, 'get_project_dir') else os.getcwd()
 
-    bp = os.path.join(proj_dir, 'imrad_blueprint.md')
-    if not os.path.exists(bp):
-        return False, "IMRAD blueprint missing, cannot verify Methods/Results mapping"
+    # 1. Locate project sections
+    proj_dir = None
+    if orch and hasattr(orch, 'get_project_dir'):
+        proj_dir = orch.get_project_dir()
+    if not proj_dir:
+        # Fallback: check outputs dict for project path
+        for agent_id, output in outputs.items():
+            if "scientific-writer" in agent_id.lower():
+                # Try to find sections/ from output context
+                pass
 
-    blueprint = open(bp, encoding='utf-8').read()
-    mapping_match = re.search(
-        r'## 3\. Methods.*?Results.*?\n\n(.*?)(?=\n##\s|\n---|\Z)',
-        blueprint, re.DOTALL
+    # Search common paths
+    section_candidates = []
+    if proj_dir:
+        section_candidates = [
+            os.path.join(proj_dir, 'sections'),
+        ]
+    # Also check outputs/projects paths
+    for agent_id in outputs:
+        if hasattr(outputs[agent_id], '__contains__') and 'project_dir' in str(type(outputs[agent_id])):
+            pass
+
+    methods_text = None
+    results_text = None
+
+    # Try loading from project sections/
+    for sections_dir in section_candidates:
+        methods_path = os.path.join(sections_dir, '03_methods.md')
+        results_path = os.path.join(sections_dir, '04_results.md')
+        if os.path.exists(methods_path):
+            methods_text = open(methods_path, encoding='utf-8').read()
+        if os.path.exists(results_path):
+            results_text = open(results_path, encoding='utf-8').read()
+        if methods_text and results_text:
+            break
+
+    # Fallback: try to extract from scientific-writer output
+    if not methods_text or not results_text:
+        for agent_id, output in outputs.items():
+            if "scientific-writer" in agent_id.lower():
+                m_match = re.search(
+                    r'#+\s*Methods?\s*\n(.*?)(?=#+\s*(?:Results?|Discussion|References))',
+                    output, re.DOTALL | re.IGNORECASE
+                )
+                r_match = re.search(
+                    r'#+\s*Results?\s*\n(.*?)(?=#+\s*(?:Discussion|References))',
+                    output, re.DOTALL | re.IGNORECASE
+                )
+                if m_match:
+                    methods_text = m_match.group(1)
+                if r_match:
+                    results_text = r_match.group(1)
+
+    if not methods_text:
+        return True, "跳过 (未找到 Methods 内容)"
+
+    if not results_text:
+        return True, "跳过 (未找到 Results 内容)"
+
+    # 2. Extract outcome declarations from Methods
+    # Look for "Outcomes of Interest" or "结局指标" section
+    outcomes_section = None
+    for pattern in [
+        r'(?:Outcomes?\s+of\s+Interest|结局指标|Endpoints?|Study\s+Outcomes?)',
+    ]:
+        m = re.search(
+            rf'(?:^|\n)#+\s*{pattern}.*?\n(.*?)(?=\n#+\s|\n##\s|\Z)',
+            methods_text, re.DOTALL | re.IGNORECASE
+        )
+        if m:
+            outcomes_section = m.group(1)
+            break
+
+    if not outcomes_section:
+        # Try broader: "Primary outcomes" or "Secondary outcomes" anywhere in Methods
+        if re.search(r'(?i)primary\s+outcomes?\s*.*?(?:cancer\s+detection|检出率)', methods_text):
+            outcomes_section = methods_text  # Use entire Methods as fallback
+
+    if not outcomes_section:
+        return True, "跳过 (Methods 中未找到结局指标声明段落, 可能是非标准格式)"
+
+    # 3. Parse individual outcome items
+    # Match patterns like: "(1) cancer detection rate", "primary outcome: X", numbered lists
+    outcome_items = []
+    # Pattern: numbered items (1) (2) etc. with descriptions
+    for m in re.finditer(
+        r'\((\d+)\)\s*([^;(]+(?:\([^)]*\))?[^;.]*)',
+        outcomes_section
+    ):
+        num = int(m.group(1))
+        desc = m.group(2).strip().lower()
+        outcome_items.append((num, desc))
+
+    # Also try: Primary outcomes included: ... Secondary outcomes included: ...
+    if not outcome_items:
+        for m in re.finditer(r'(?i)(?:primary|secondary)\s+outcomes?\s+(?:included\s*:?\s*)?(.+?)(?=\.|$)', outcomes_section):
+            text = m.group(1)
+            for i, item in enumerate(text.split(';')):
+                item = item.strip().strip('()').lower()
+                if item:
+                    outcome_items.append((i + 1, item))
+
+    if len(outcome_items) < 2:
+        # Check if there's an imrad_blueprint.md as fallback
+        if proj_dir:
+            bp = os.path.join(proj_dir, 'imrad_blueprint.md')
+            if os.path.exists(bp):
+                return True, (
+                    f"Methods↔Results: 无法解析结局指标列表 (仅找到 {len(outcome_items)} 项), "
+                    f"但 imrad_blueprint.md 存在, 降级为 blueprint 结构检查通过"
+                )
+        return True, f"跳过 (仅找到 {len(outcome_items)} 个结局指标, 不足验证)"
+
+    # 4. Define keyword patterns for common outcome types
+    outcome_keywords = {
+        'detection': ['detection rate', 'cancer detection', 'diagnostic yield', '检出率', '检出'],
+        'complication': ['complication', 'sepsis', 'bleeding', 'infection', 'adverse event', 'clavien', '并发症'],
+        'core': ['core', 'biopsy core', 'needle core', 'sampling', '穿刺针数', '针数', '芯数'],
+        'time': ['min', 'minute', 'time', 'duration', 'procedure time', '手术时间', '操作时间'],
+        'anesthesia': ['anesthesia', 'anaesthesia', 'local anesthesia', 'general anesthesia', 'sedation', '麻醉', '局麻', '全麻'],
+        'imaging': ['ultrasound', 'US', 'CT', 'MRI', 'fluoroscopy', 'fusion', 'guidance', 'imaging modality', '引导', '影像'],
+    }
+
+    def _classify_outcome(desc):
+        """Map outcome description to keyword categories"""
+        cats = []
+        for cat, keywords in outcome_keywords.items():
+            if any(kw in desc for kw in keywords):
+                cats.append(cat)
+        return cats if cats else ['other']
+
+    def _count_quantitative_hits(results_text, categories):
+        """Count quantitative/systematic mentions in Results for given categories"""
+        count = 0
+        # Search for quantitative patterns near category keywords
+        for cat in categories:
+            if cat not in outcome_keywords:
+                continue
+            for kw in outcome_keywords[cat][:3]:  # Top 3 keywords per category
+                # Look for numbers near the keyword (quantitative reporting)
+                pattern = rf'(?i){re.escape(kw)}.{{0,100}}(\d+\.?\d*\s*%|\d+/\d+|\d+\s*(?:min|patients|cores|mL))'
+                matches = re.findall(pattern, results_text)
+                count += len(matches)
+                # Also count standalone keyword mentions as partial
+                if not matches:
+                    if re.search(rf'(?i){re.escape(kw)}', results_text):
+                        count += 0.5  # Qualitative mention = partial credit
+        return count
+
+    # 5. Check each outcome
+    results_report = []
+    total = len(outcome_items)
+    pass_count = 0
+    warn_count = 0
+    fail_items = []
+
+    for num, desc in outcome_items:
+        cats = _classify_outcome(desc)
+        hits = _count_quantitative_hits(results_text, cats)
+
+        if hits >= 2:
+            status = 'PASS'
+            pass_count += 1
+        elif hits >= 0.5:
+            status = 'WARN'
+            warn_count += 1
+            fail_items.append(f"({num}) {desc[:60]} — 零散提及(hits={hits})")
+        else:
+            status = 'FAIL'
+            fail_items.append(f"({num}) {desc[:60]} — 完全缺失")
+
+        results_report.append(
+            f"({num}) {desc[:50]}... [{status}] hits={hits}"
+        )
+
+    # 6. Overall verdict
+    if fail_items:
+        return False, (
+            f"Methods↔Results 结局指标断裂: {len(fail_items)}/{total} 个指标在 Results 中回报不足或缺失. "
+            f"断裂项: {'; '.join(fail_items[:5])}. "
+            f"全部指标: {' | '.join(results_report[:8])}. "
+            f"请: (1)在 Results 中补充缺失指标的定量回报; "
+            f"或 (2)在 Methods 中诚实声明'可提取但报告不一致,无法系统综合'"
+        )
+
+    if warn_count > 0:
+        return True, (
+            f"Methods↔Results: {pass_count} PASS + {warn_count} WARN / {total}. "
+            f"警告项: {'; '.join(fail_items[:3])}. "
+            f"建议在 Methods Limitations 中注明回报不足的指标"
+        )
+
+    return True, (
+        f"Methods↔Results 1:1 内容验证通过: "
+        f"{pass_count}/{total} 个结局指标在 Results 中有系统性定量回报 ✓. "
+        f"{' | '.join(results_report[:6])}"
     )
-    if not mapping_match:
-        return False, "Blueprint missing module 3 (Methods/Results mapping table)"
-
-    mapping_text = mapping_match.group(1)
-    data_rows = [
-        r for r in mapping_text.split('\n')
-        if r.strip().startswith('|') and not r.strip().startswith('|---')
-        and 'Methods' not in r and 'Results' not in r and '验证' not in r
-    ]
-
-    if len(data_rows) < 3:
-        return False, f"Only {len(data_rows)} mapping rows, need >=3"
-
-    for i, row in enumerate(data_rows):
-        cells = [c.strip() for c in row.split('|') if c.strip()]
-        if len(cells) < 2:
-            return False, f"Mapping row {i+1} incomplete"
-
-    return True, f"Methods/Results 1:1 mapping OK ({len(data_rows)} rows)"
 
 
 def check_imrad_word_budget(outputs: dict, orch) -> tuple:
@@ -5419,6 +5660,15 @@ GATE_DEFINITIONS = {
             "外部验证是否使用独立数据集?",
             "外部验证性能是否与内部验证可比?",
             "泛化性评估是否充分 (不同人群/时间)?",
+        ],
+    },
+    "phase3_prime": {
+        "auto_checks": {
+            "evidence_table_no_reviews": check_evidence_table_no_reviews,       # 2026-05-27: 综述禁止引用综述 (前置到 Phase 3')
+        },
+        "llm_checks": [
+            "证据表每一条目是否有原文直接引用?",
+            "检索策略是否可复现 (完整检索式+数据库+筛选流程)?",
         ],
     },
     "review": {

@@ -71,8 +71,10 @@ user-invocable: true
 
 **综述 Phase 3' 适配**: 
 - 原 Phase 3 (ml-engineer 执行/内部验证) 对综述不适用
-- 替换为: research-assistant 系统检索+筛选+**结构化文献阅读(PubMed摘要必读)**+证据提取 → clinical-researcher 证据质量判断+叙事框架填充
-- Gate 3' 检查: 检索策略可复现 + 证据提取表完整 + 纳入文献≥45篇（综述门槛）+ **全部条目来源层级≥L2 (禁止L3)** + **L2占比≤30%**
+- 替换为: research-assistant 系统检索+筛选+**结构化文献阅读(PubMed摘要必读)**+**专科常识测试**+证据提取 → clinical-researcher 证据质量判断+叙事框架填充
+- Gate 3' 检查: 检索策略可复现 + 证据提取表完整 + 纳入文献≥45篇（综述门槛, **窄专题豁免见下**）+ **全部条目来源层级≥L2 (禁止L3)** + **L2占比≤30%** + **证据表禁止包含综述作为一级证据** (`check_evidence_table_no_reviews`)
+- **窄专题豁免**: 若已知系统综述显示全球一级研究总量 < 30 篇, SDS 中声明 `narrow_topic: true`, Gate 3' 接受 ≥ 30 篇且不因此 FAIL。此豁免在 Phase 0 SDS 阶段评估, 需附系统综述支持
+- **综述前置阻断**: Phase 3' 执行 `check_evidence_table_no_reviews` — 扫描证据表 Design 列, 检测到 "systematic review" / "meta-analysis" / "review" → Gate 3' FAIL → 驳回替换为一级文献。效果: 写作开始前证据基础已清洁, 无需 Phase 6 返工
 - **L3 阻断规则**: 任何仅凭搜索摘要片段或LLM记忆写入的条目(L3) → Gate 3' FAIL → 驳回，必须重新获取实际文献内容（PubMed摘要或全文）再写入证据表。这是 B环 #12 spot audit 的前置条件。
 
 **综述 Phase 6 特殊要求**:
@@ -107,7 +109,7 @@ Phase 7: 临床工具部署 ──── Gate 7 ──── clinical-tool-devel
 
 | Phase | 执行 Agent | 详细规范位置 |
 |-------|-----------|-------------|
-| **Phase 0** (SDS) | 编排器自身 | SDS 模版见项目基线管理 |
+| **Phase 0** (SDS) | 编排器自身 | SDS 模版见项目基线管理。SDS 必须包含「专题文献总量评估」字段（基于已知系统综述, 全球一级研究总量）。若 < 30 篇, 声明 `narrow_topic: true`, 触发参考文献数量豁免机制 |
 | **Phase 1** (问题定义) | {div}/clinical-researcher + {div}/pi + shared/data-engineer + shared/research-assistant | `company/divisions/{div}/pi-agent.md` (FRAME), `company/shared-services/data-engineer-agent.md` (数据评估) |
 | **Phase 2** (方案设计) | {div}/computational-biologist + shared/biostatistician + {div}/clinical-researcher | 研讨厅辩论模式 |
 | **Phase 3** (执行/验证) | shared/ml-engineer | `company/shared-services/ml-engineer-agent.md` (ML 安全规范 10 条 + 评估指标 + Figure 规范) |
@@ -174,6 +176,13 @@ Phase 7: 临床工具部署 ──── Gate 7 ──── clinical-tool-devel
 - 动作: 创建 `CR-classic-ratio-{project_id}` → Phase 6 返工: 将非必要经典文献替换为近期文献, 或从经典注册表移除并接受 recency 重新验证 → 重新 Gate 6
 - 严重度: high (经典豁免机制被滥用, 论文实质依赖过多旧文献)
 - 来源: OEMC-R14 (2026-05-27), 《参考文献质量标准》规则二「经典论文占比上限」
+
+**B环触发规则 #19 — Methods-Results 结局指标断裂 (Methods→Results)**:
+- 触发条件: Gate 6 `check_methods_results_1_to_1` 发现 Methods「Outcomes of Interest」声明的结局指标在 Results 中无系统性定量回报（召回率 < 阈值）
+- 信号: Methods 声明的 (1)-(N) 个结局指标中 ≥1 个在 Results 中仅零散提及或完全缺失
+- 动作: 创建 `CR-outcome-gap-{project_id}` → Phase 6 返工: 在 Results 中补充缺失指标的定量回报段落, 或在 Methods 中诚实声明「可提取但报告不一致」→ 重新执行 Gate 6
+- 严重度: high (Methods↔Results 声明-回报链条断裂, 读者以为会报告的指标实际未报告)
+- 来源: 钱学森可靠性工程 — 交叉验证从「文件结构存在性」升级为「声明内容回报验证」(2026-05-27)
 
 ### 模块二: 可靠性工程
 LLM容错 (指数退避+降级+断点续传) | 一致性交叉验证 (clinical↔data↔writer↔PI) | 执行前安全扫描。ML 内存安全规范见 `company/shared-services/ml-engineer-agent.md`。

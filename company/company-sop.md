@@ -222,7 +222,7 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 19 | 参考文献数量达标 | auto | `check_ref_count`: 自动识别项目类型, 论著≥25 / 综述≥45 |
 | 20 | 参考文献时效性 | auto | `check_ref_recency`: 近5年≥80% + 近10年≥95% (双重门槛) |
 | 21 | Discussion 四段完整 | auto | ¶1-¶4 空行分隔，¶4 无结论性收束句 |
-| 22 | Methods↔Results 1:1 | llm | PI 确认无遗漏 |
+| 22 | Methods↔Results 结局指标验证 | auto | `check_methods_results_1_to_1`: 提取Methods结局指标→扫描Results定量回报→逐指标判定覆盖 (PASS/WARN/FAIL) |
 | 23 | 数值可追溯 | llm | 所有数字标注来源 Agent |
 | 24 | Methods 因果方向 | auto | `check_methods_no_result_language`: Methods 不含事后绩效断言 |
 | 25 | SAP↔Methods 一致性 | auto | `check_sap_methods_consistency`: SAP 预设 = Methods 声明 或 有正式 CR |

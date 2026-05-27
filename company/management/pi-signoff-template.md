@@ -13,8 +13,10 @@
   - clinical-researcher 临床审查报告: EXISTS + verdict=approved
   - data provenance 报告 (data-engineer): EXISTS + DAG-R4 验证通过
 
-- [ ] **2. 数值内部一致性**
-  - Abstract 数值 = Results 数值 = Tables 数值 = Figures 数值
+- [ ] **2. 声明-回报一致性**
+  - Abstract 数值 = Results 数值 = Tables 数值 = Figures 数值 (数值内部一致)
+  - Methods「Outcomes of Interest」声明的每个结局指标 → Results 均有系统性定量回报
+  - 缺失回报的指标已在 Methods 中诚实声明为「可提取但报告不一致」
   - 所有百分比和效应量可在原始分析输出文件中追溯
 
 - [ ] **3. 研究问题-结论闭环**

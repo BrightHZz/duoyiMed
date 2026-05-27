@@ -11,6 +11,7 @@
 |------|--------|------|---------|:--:|
 | 2026-05-27 | wangduoduo | 参考文献 A/B 环统一改造 | P0-P2 全量修复 | ✅ 完成 |
 | 2026-05-27 | wangduoduo | 经典文献占比 ≤5% | 新增 check_classic_ratio + B环#18 | ✅ 完成 |
+| 2026-05-27 | wangduoduo | Methods↔Results 内容验证 | 升级 check_methods_results_1_to_1 + B环#19 | ✅ 完成 |
 
 ---
 

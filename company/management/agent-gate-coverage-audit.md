@@ -188,3 +188,43 @@ check_all_refs_have_doi         # 每篇期刊引用有 DOI
 ```
 
 目标覆盖率: 37% → **80%+** (37/54 auto checks)
+
+---
+
+## 九、验证深度审计框架 (2026-05-27 新增)
+
+> 来源: qianLieXianChuanCI 项目发现`check_methods_results_1_to_1`只检查blueprint结构(形式)
+> 但未验证Methods声明的结局指标在Results中是否有定量回报(内容)。
+> 根因: 钱学森控制论架构正确，但检查函数实现深度参差不齐。
+
+### 深度分级
+
+| 级别 | 定义 | 检查内容 | 允许场景 | 漏检风险 |
+|:--:|------|---------|---------|:--:|
+| **L1 存在性** | 检查文件/段落是否存在 | `os.path.exists()` | 预检项(SAP存在、blueprint存在、clinical-review存在) | 低(文件存在即满足条件) |
+| **L2 结构性** | 检查字段/行数/格式 | 正则匹配、行数计数、格式验证 | 表格完整性、章节数量、DOI格式 | 中(结构正确可能内容错误) |
+| **L3 内容性** | 提取并验证具体数据语义 | 数值提取+比对+语义匹配 | 数值一致性、结局回报率、声明-回报映射 | 低(内容级验证) |
+
+### Phase 6 auto check 深度评估
+
+| 检查项 | 当前级别 | 应达级别 | 是否需要升级 |
+|--------|:--:|:--:|:--:|
+| `check_ref_count` | L2 (计数) | L2 | 否 |
+| `check_ref_recency` | L3 (提取年份+计算比例) | L3 | 否 |
+| `check_reference_claim_mapping` | L3 (双向比对) | L3 | 否 |
+| `check_reference_source_tier` | L3 (提取tier+统计) | L3 | 否 |
+| `check_classic_ratio` | L3 (计算比例) | L3 | 否 |
+| `check_methods_results_1_to_1` | **L1→L3** ✅ | L3 | 已升级(2026-05-27) |
+| `check_discussion_seven_paragraphs` | L2 (段落数) | L2 | 否(LLM check补充内容) |
+| `check_abstract_word_count` | L2 (词数) | L2 | 否 |
+| `check_doi_verification` | L2 (格式+fake检测) | L2 | 否 |
+| `check_all_refs_cited_in_text` | L3 (双向比对) | L3 | 否 |
+| `check_sap_exists` | L1 | L1 | 否(预检项) |
+| `check_imrad_blueprint_exists` | L1 | L1 | 否(预检项) |
+
+### 审计规则
+
+1. Phase 6 检查项中 L3 占比应 ≥ 80%
+2. 所有标记为「应达 L3 但为 L1/L2」的检查 → 必须升级, 纳入 P0 backlog
+3. 新增检查函数默认要求 L3 级别
+4. 每次规则变更时在 rule-propagation-checklist.md 中标注新增检查的深度级别
