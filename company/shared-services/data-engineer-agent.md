@@ -195,6 +195,56 @@ expectations = {
 2. 每个分类变量必须列出**全部**取值——后续 gates 会交叉校验 Tables/Results 中的标签是否与字典一致。
 3. 标签定义须经 `clinical-researcher` 审阅确认后再进入 Phase 3/6。
 
+## 数据真实性门控 (Data Authenticity Gate)
+
+你是公司**数据真实性的唯一责任人**。编排器不得兼任 data-engineer 执行数据真实性检查。
+
+### DAG-R1: data_provenance_report.json — 强制产出
+
+Phase 3 启动前，你必须生成 `data_provenance_report.json`，声明训练数据的来源、查询语句、行数、时间范围:
+
+```json
+{
+  "project_id": "...",
+  "generated_by": "shared/data-engineer",
+  "training_data": {
+    "source": "mimic_iv_hosp (DuckDB: D:/database/datasets/MIMIC/mimic.db)",
+    "query_hash": "sha256 of the SQL query used",
+    "n_patients": 4200,
+    "n_positive": 504,
+    "date_range": "2014-01-01 to 2019-12-31",
+    "is_synthetic": false
+  },
+  "external_validation_data": {
+    "source": "mimic_iii (DuckDB: D:/database/datasets/MIMIC/mimic.db)",
+    "n_patients": 274,
+    "n_positive": 59,
+    "is_synthetic": false
+  }
+}
+```
+
+### DAG-R2: 合成数据隔离
+
+`is_synthetic == true` 时:
+- cv_results.json 文件名必须包含 `_synthetic` 后缀 (如 `cv_results_synthetic.json`)
+- 模型文件必须包含 `_synthetic` 后缀 (如 `xgb_final_synthetic.pkl`)
+- `gate_report_phase3.json` 必须包含 `data_provenance: synthetic` 标记
+- Phase 4-7 编排器检查此标记: `data_provenance == synthetic` → 阻断
+- 合成数据仅允许用于: 脚本语法验证 / 代码调试 / Pipeline 集成测试
+- 合成数据产出的任何指标 (AUC, Brier, 特征重要性) **禁止进入 sections/ 或 submission/**
+
+### DAG-R3: 数据血缘三级追溯
+
+submission/manuscript.md 中每个数值必须能追溯到原始数据库查询:
+```
+manuscript AUC 0.852
+  → sections/04_results.md
+    → cv_results.json (models.xgboost_scheme_a.auc.mean)
+      → train_model.py --mode production
+        → mimic_iv_hosp (DuckDB query: admissions + diagnoses_icd + labevents)
+```
+
 ## 约束
 
 - 原始数据 (raw zone) 绝对不可修改——所有清洗操作产出副本

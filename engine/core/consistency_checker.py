@@ -76,6 +76,25 @@ CONSISTENCY_PAIRS: dict[str, list[dict]] = {
             ),
         },
     ],
+    # 🆕 Phase 3 跨阶段一致性: 验证模型输出与 SAP 声明一致
+    "execution": [
+        {
+            "pair_id": "cv_results_vs_sap",
+            "agent_a": "ml-engineer",
+            "agent_b": "biostatistician",
+            "source": "cross_phase",
+            "verify_phase": "design",
+            "severity": "critical",
+            "check_prompt": (
+                "对比 ml-engineer 的 cv_results.json 中实际训练的模型类型 "
+                "(xgboost/logistic_regression/random_forest 等) 与 biostatistician "
+                "的 SAP (sap.md) 中声明的分析方法列表。检查: (1) cv_results.json 中 "
+                "每个实际训练的模型是否在 SAP 中有对应的统计方法声明, "
+                "(2) SAP 中声明的分析是否都已被执行 (未执行的需说明原因), "
+                "(3) 模型评估指标 (AUC/Brier/Calibration) 是否与 SAP 规定的指标一致。"
+            ),
+        },
+    ],
     "external_validation": [
         {
             "pair_id": "ext_model_vs_sap",

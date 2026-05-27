@@ -70,6 +70,16 @@ def check_data_availability_confirmed(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 data-engineer 输出)"
 
 
+def check_review_gap_analysis_exists(outputs: dict, orch) -> tuple:
+    """检查 research-assistant 是否输出了综述缺口分析 (Review-Derived Gaps)"""
+    for agent_id, output in outputs.items():
+        if "research-assistant" in agent_id.lower():
+            if any(kw in output for kw in ["综述缺口", "Review Gap", "Review-Derived", "综述缺口分析"]):
+                return True, "综述缺口分析存在"
+            return False, "缺少综述缺口分析 — research-assistant 未提取高分综述中的缺口方向"
+    return True, "跳过 (无 research-assistant 输出)"
+
+
 def check_data_dictionary_exists(outputs: dict, orch) -> tuple:
     """数据字典已产出: data/data_dictionary.md 存在且包含分类变量编码→标签映射
 
@@ -405,30 +415,101 @@ def check_tables_exist(outputs: dict, orch) -> tuple:
 
 
 def check_figures_exist(outputs: dict, orch) -> tuple:
-    """检查 figures/ 目录下是否有至少 4 张图表 (ROC/校准/SHAP/DCA)"""
+    """检查 figures/ 目录下是否有充足的图表 + caption↔image 双向匹配 + 正文引用。
+
+    钱学森模块一+二 (2026-05-24 升级):
+      旧逻辑: len(image_files) >= 3 → PASS (盲计数)
+      新逻辑: 计数 + 编号连续性 + caption↔image 双向匹配 + 正文引用验证
+
+    若有 cohort_attrition.json → 预期最少 4 张 (含 Figure 1)。
+    """
     import os
+    import re
     from pathlib import Path
     project_id = getattr(orch, '_current_project_id', None)
     if not project_id:
         return True, "跳过 (无 project_id)"
 
+    has_cohort = False
+    proj_dir = None
+
     if hasattr(orch, 'kb') and orch.kb:
         for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
             proj_dir = Path(vault_path) / 'projects' / project_id
-            # figures/ 是零件工作目录
             for figures_rel in ['figures']:
                 figures_dir = proj_dir / figures_rel
                 if figures_dir.exists():
+                    # Check cohort attrition
+                    cohort_file = proj_dir / 'cohort_attrition.json'
+                    has_cohort = cohort_file.exists()
+
                     image_files = list(figures_dir.glob('*.png')) + list(figures_dir.glob('*.jpg'))
                     caption_files = list(figures_dir.glob('*caption*.md'))
-                    total_visual = len(image_files) + len([f for f in caption_files if 'fig' in f.name.lower()])
-                    if len(image_files) >= 3:
-                        return True, f"{figures_rel}/ 目录存在, 含 {len(image_files)} 张图片 + {len(caption_files)} 个图注"
-                    elif total_visual >= 4:
-                        return True, f"{figures_rel}/ 目录存在, 含 {total_visual} 个视觉元素"
-                    else:
-                        return False, f"{figures_rel}/ 目录内容不足 (仅 {len(image_files)} 图片, 需 ≥3: ROC/校准/SHAP/DCA)"
-    return False, "未找到项目的 figures/ 目录, Phase 6 必须产出至少 4 张图表"
+
+                    min_expected = 4 if has_cohort else 3
+
+                    if len(image_files) < min_expected:
+                        return False, (
+                            f"{figures_rel}/ 图片数量不足 (仅 {len(image_files)} 张, "
+                            f"需 ≥{min_expected}): Figure 1 (cohort flow) + Figure 2-4 (ROC/Calib/Importance)"
+                            if has_cohort else
+                            f"{figures_rel}/ 图片数量不足 (仅 {len(image_files)} 张, 需 ≥3: ROC/校准/特征重要性)"
+                        )
+
+                    # Caption ↔ image bidirectional check
+                    image_basenames = {f.stem for f in image_files
+                                       if re.match(r'Figure\d+_', f.name)}
+                    caption_basenames = set()
+                    for cf in caption_files:
+                        m = re.match(r'(Figure\d+_[a-zA-Z0-9-]+)_caption', cf.stem)
+                        if m:
+                            caption_basenames.add(m.group(1))
+
+                    caption_without_image = caption_basenames - image_basenames
+                    image_without_caption = image_basenames - caption_basenames
+
+                    issues = []
+                    if caption_without_image:
+                        issues.append(
+                            f"Caption 无对应图像: {sorted(caption_without_image)[:3]}"
+                        )
+                    if image_without_caption:
+                        issues.append(
+                            f"图像无对应 caption: {sorted(image_without_caption)[:3]}"
+                        )
+
+                    if issues:
+                        return False, (
+                            f"{figures_rel}/ caption↔image 不匹配: {'; '.join(issues)}"
+                        )
+
+                    # Text citation check: each figure referenced in manuscript
+                    manuscript_path = proj_dir / 'submission' / 'manuscript.md'
+                    if manuscript_path.exists():
+                        manuscript = manuscript_path.read_text(encoding='utf-8')
+                        figure_nums_in_fs = set()
+                        for fname in image_files:
+                            m = re.match(r'Figure(\d+)_', fname.name)
+                            if m:
+                                figure_nums_in_fs.add(int(m.group(1)))
+
+                        uncited = []
+                        for n in sorted(figure_nums_in_fs):
+                            if not re.search(rf'Figure\s+{n}\b', manuscript):
+                                uncited.append(str(n))
+                        if uncited:
+                            return False, (
+                                f"Figure {', '.join(uncited)} 未被正文引用 "
+                                f"(文件存在但 manuscript 中未找到 'Figure N' 引用)"
+                            )
+
+                    return True, (
+                        f"{figures_rel}/ 存在, {len(image_files)} 张图片 "
+                        f"+ {len(caption_files)} 个图注, "
+                        f"caption↔image 双向匹配 ✓ "
+                        + (f"(含 Figure 1)" if has_cohort else "")
+                    )
+    return False, "未找到项目的 figures/ 目录"
 
 
 def check_manuscript_assembled(outputs: dict, orch) -> tuple:
@@ -943,6 +1024,311 @@ def check_all_refs_cited_in_text(outputs: dict, orch) -> tuple:
                 f"正文引用 {len(cited_numbers)} 篇, 未引用 0, 孤儿引用 0 ✓"
             )
     return True, "跳过 (无 scientific-writer 输出)"
+
+
+def check_reference_claim_mapping(outputs: dict, orch) -> tuple:
+    """每篇参考文献必须在 reference-claim-mapping.md 中有对应的正文声明映射
+
+    OEMC-R12: 参考文献-声明可追溯原则。
+    每篇文献 [N] 必须有一个对应的正文声明摘要，证明该文献直接支撑论文论点。
+
+    reference-claim-mapping.md 格式:
+      [1] SOFA 评分原始定义, 本研究的对照评分标准
+      [2] Rockwood 缺陷累积模型, eFI 的核心方法学基础
+      ...
+
+    违规判定:
+    - mapping 文件不存在 → FAIL (阻断, 必须生成)
+    - References 中存在 [N] 但 mapping 中无对应条目 → FAIL (孤儿引用, 可能为无关堆砌)
+    - mapping 中的 [N] 在 References 中不存在 → FAIL (指向不存在文献)
+    """
+    import re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        project_id = getattr(orch, '_current_project_id', None)
+        if project_id:
+            project_dir = _find_project_dir(orch, project_id)
+    if not project_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    base = Path(project_dir)
+    mapping_path = base / "reference-claim-mapping.md"
+
+    # 1. 检查 mapping 文件是否存在
+    if not mapping_path.exists():
+        return False, (
+            "OEMC-R12 阻断: reference-claim-mapping.md 不存在。\n"
+            "编排器必须在 Phase 6 写作过程中生成此文件，记录每篇参考文献对应的正文声明。\n"
+            "格式: [N] 正文声明一句话摘要 (每行一条)"
+        )
+
+    mapping_text = mapping_path.read_text(encoding='utf-8')
+
+    # 2. 从 mapping 中提取声明编号
+    mapping_numbers = set()
+    for m in re.finditer(r'^\s*\[(\d+)\]', mapping_text, re.MULTILINE):
+        mapping_numbers.add(int(m.group(1)))
+
+    if not mapping_numbers:
+        return False, (
+            "reference-claim-mapping.md 存在但未包含任何 [N] 格式的声明映射。\n"
+            "格式: [N] 正文声明一句话摘要 (每行一条)"
+        )
+
+    # 3. 从 manuscript 的 References 章节提取引用编号
+    manuscript_path = base / "submission" / "manuscript.md"
+    if not manuscript_path.exists():
+        # fallback: 尝试从 outputs 或 section 中获取
+        ref_section_path = base / "sections" / "07_references.md"
+        if ref_section_path.exists():
+            ref_text = ref_section_path.read_text(encoding='utf-8')
+        else:
+            return True, "跳过 (无 manuscript.md 或 references section)"
+    else:
+        manuscript = manuscript_path.read_text(encoding='utf-8')
+
+        # 找 References 章节
+        ref_match = re.search(
+            r'(?:##\s*References?|##\s*参考文献)\s*\n',
+            manuscript, re.IGNORECASE
+        )
+        if not ref_match:
+            return True, "跳过 (manuscript 中无 References 章节)"
+        ref_text = manuscript[ref_match.start():]
+
+    # 从 References 章节提取编号
+    ref_numbers = set()
+    # 匹配 "1. Author..." 或 "[1] Author..." 或 "1 Author..." 开头的条目
+    for m in re.finditer(r'(?:^|\n)\s*(?:\[(\d+)\]|(\d+)\.)\s+\w', ref_text):
+        num = m.group(1) or m.group(2)
+        ref_numbers.add(int(num))
+
+    if not ref_numbers:
+        return True, "跳过 (References 中未检测到编号条目)"
+
+    # 4. 双向比较
+    orphan_refs = ref_numbers - mapping_numbers  # 在 Reference 中但 mapping 中无
+    phantom_claims = mapping_numbers - ref_numbers  # 在 mapping 中但 Reference 中无
+
+    violations = []
+    if orphan_refs:
+        sorted_orphan = sorted(orphan_refs)
+        violations.append(
+            f"{len(orphan_refs)} 篇文献在 References 中存在但无正文声明映射: "
+            f"[{', '.join(str(n) for n in sorted_orphan[:15])}"
+            + (f", ...等{len(orphan_refs)}篇" if len(orphan_refs) > 15 else "]")
+            + "\n  → 这些文献可能为满足数量/时效性指标而堆砌的无关文献。"
+            + "\n  → 请逐条核对: 每篇是否直接支撑正文的某个具体声明？若是，补入 mapping；若否，从 References 移除。"
+        )
+    if phantom_claims:
+        sorted_phantom = sorted(phantom_claims)
+        violations.append(
+            f"{len(phantom_claims)} 条声明映射指向 References 中不存在的文献: "
+            f"[{', '.join(str(n) for n in sorted_phantom[:10])}]"
+            + "\n  → 编号不一致或文献被删除后 mapping 未同步更新"
+        )
+
+    if violations:
+        return False, (
+            f"OEMC-R12 阻断: 参考文献-声明可追溯不通过。\n"
+            f"References: {len(ref_numbers)} 篇, Mapping: {len(mapping_numbers)} 条\n\n"
+            + "\n".join(f"  • {v}" for v in violations)
+        )
+
+    return True, (
+        f"参考文献-声明映射通过: References {len(ref_numbers)} 篇 ↔ Mapping {len(mapping_numbers)} 条, "
+        f"孤儿引用 0, 幽灵声明 0 ✓"
+    )
+
+
+def check_reference_source_tier(outputs: dict, orch) -> tuple:
+    """每篇参考文献的 source_tier 必须 ≥L2, L3 阻断, L2 >30% → COND_PASS
+
+    OEMC-R13: 参考文献来源层级原则（通用）。
+    扫描 reference-claim-mapping.md 每行的 source_tier 字段。
+    """
+    import re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        project_id = getattr(orch, '_current_project_id', None)
+        if project_id:
+            project_dir = _find_project_dir(orch, project_id)
+    if not project_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    base = Path(project_dir)
+    mapping_path = base / "reference-claim-mapping.md"
+
+    if not mapping_path.exists():
+        return True, "跳过 (无 reference-claim-mapping.md)"
+
+    mapping_text = mapping_path.read_text(encoding='utf-8')
+
+    entries = []
+    for line in mapping_text.strip().split('\n'):
+        line = line.strip()
+        if not line or not re.match(r'^\s*\[', line):
+            continue
+        entries.append(line)
+
+    if not entries:
+        return True, "跳过 (mapping 中无条目)"
+
+    l1_count = 0
+    l2_count = 0
+    l3_entries = []
+    no_tier = []
+
+    for i, line in enumerate(entries):
+        tier_match = re.search(r'source_tier\s*:\s*(L[123])', line, re.IGNORECASE)
+        if tier_match:
+            tier = tier_match.group(1).upper()
+            if tier == 'L1':
+                l1_count += 1
+            elif tier == 'L2':
+                l2_count += 1
+            elif tier == 'L3':
+                l3_entries.append(i + 1)
+        else:
+            no_tier.append(i + 1)
+
+    total = len(entries)
+
+    violations = []
+    if l3_entries:
+        violations.append(
+            f"L3 阻断 (未实际阅读): 条目 #{', #'.join(str(n) for n in l3_entries[:10])}"
+            + (f", ...共 {len(l3_entries)} 条" if len(l3_entries) > 10 else "")
+            + "\n  → L3 = 仅凭 LLM 记忆/搜索片段, 未获取实际文献内容"
+            + "\n  → 必须通过 PubMed WebFetch 获取摘要 (L2) 或全文 (L1) 后重新标注"
+        )
+
+    if no_tier:
+        violations.append(
+            f"缺少 source_tier 标注: 条目 #{', #'.join(str(n) for n in no_tier[:10])}"
+            + (f", ...共 {len(no_tier)} 条" if len(no_tier) > 10 else "")
+            + "\n  → 格式: [N] 声明 | source_tier: L1|L2 | verified_date: YYYY-MM-DD | pmid: XXXXXXXX"
+        )
+
+    if violations:
+        return False, (
+            f"OEMC-R13 阻断: 参考文献来源层级不通过 (共 {total} 条)。\n\n"
+            + "\n".join(f"  • {v}" for v in violations)
+        )
+
+    # All pass: check L2 ratio
+    l2_ratio = l2_count / total if total > 0 else 0
+    if l2_ratio > 0.30:
+        return True, (
+            f"来源层级 COND_PASS: L1={l1_count} ({l1_count/total*100:.0f}%), "
+            f"L2={l2_count} ({l2_ratio*100:.0f}% > 30%), L3=0"
+            + "\n  → L2 占比超限, 条件注入 Phase 5 PI 审查"
+        )
+
+    return True, (
+        f"来源层级通过: L1={l1_count} ({l1_count/total*100:.0f}%), "
+        f"L2={l2_count} ({l2_ratio*100:.0f}% ≤ 30%), L3=0 ✓"
+    )
+
+
+def check_reference_spot_audit(outputs: dict, orch) -> tuple:
+    """随机抽检 reference-claim-mapping.md, 验证来源层级标注的真实性
+
+    OEMC-R13 spot audit。
+    抽取 N = max(3, 15%×条目总数) 条, 检查是否标注了 verified_date + pmid/doi。
+    缺少审计痕迹 → 视为「未经原文验证」→ 计入未验证比例。
+    未验证比例 >20% → COND_PASS。
+    """
+    import re
+    import random
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        project_id = getattr(orch, '_current_project_id', None)
+        if project_id:
+            project_dir = _find_project_dir(orch, project_id)
+    if not project_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    base = Path(project_dir)
+    mapping_path = base / "reference-claim-mapping.md"
+
+    if not mapping_path.exists():
+        return True, "跳过 (无 reference-claim-mapping.md)"
+
+    mapping_text = mapping_path.read_text(encoding='utf-8')
+
+    entries = []
+    for line in mapping_text.strip().split('\n'):
+        line = line.strip()
+        if not line or not re.match(r'^\s*\[', line):
+            continue
+        entries.append(line)
+
+    if not entries:
+        return True, "跳过 (mapping 中无条目)"
+
+    total = len(entries)
+    sample_n = max(3, int(total * 0.15))
+    sample_n = min(sample_n, total)
+
+    # Deterministic selection seeded by project_id
+    seed = hash(str(base))
+    rng = random.Random(seed)
+    sampled_indices = sorted(rng.sample(range(total), sample_n))
+
+    missing_pmid = []
+    missing_date = []
+    for idx in sampled_indices:
+        line = entries[idx]
+        has_pmid = bool(re.search(r'pmid\s*:\s*\d+', line, re.IGNORECASE))
+        has_doi = bool(re.search(r'doi\s*:\s*10\.', line, re.IGNORECASE))
+        has_date = bool(re.search(r'verified_date\s*:\s*\d{4}-\d{2}-\d{2}', line))
+
+        if not has_pmid and not has_doi:
+            missing_pmid.append(idx + 1)
+        if not has_date:
+            missing_date.append(idx + 1)
+
+    unverifiable = set(missing_pmid) | set(missing_date)
+    unverified_ratio = len(unverifiable) / sample_n if sample_n > 0 else 0
+
+    details = []
+    if missing_pmid:
+        details.append(
+            f"{len(missing_pmid)}/{sample_n} 条缺少 pmid/doi: "
+            f"#{', #'.join(str(n) for n in missing_pmid[:10])}"
+        )
+    if missing_date:
+        details.append(
+            f"{len(missing_date)}/{sample_n} 条缺少 verified_date: "
+            f"#{', #'.join(str(n) for n in missing_date[:10])}"
+        )
+
+    if unverified_ratio > 0.20:
+        return True, (
+            f"Spot audit COND_PASS: 抽检 {sample_n}/{total} 条, "
+            f"审计痕迹缺失 {len(unverifiable)}/{sample_n} ({unverified_ratio*100:.0f}% > 20%)"
+            + ("\n  • " + "\n  • ".join(details) if details else "")
+            + "\n  → 未经验证的条目超过 20%, 条件注入 Phase 5 PI 审查"
+        )
+
+    if details:
+        return True, (
+            f"Spot audit PASS: 抽检 {sample_n}/{total} 条, "
+            f"审计痕迹缺失 {len(unverifiable)}/{sample_n} ({unverified_ratio*100:.0f}% ≤ 20%) ✓"
+            + ("\n  • " + "\n  • ".join(details) if details else "")
+        )
+
+    return True, (
+        f"Spot audit PASS: 抽检 {sample_n}/{total} 条, "
+        f"全部有 verified_date + pmid/doi, 审计痕迹完整 ✓"
+    )
 
 
 def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
@@ -2324,7 +2710,364 @@ def check_cohort_attrition_consistency(outputs: dict, orch) -> tuple:
     )
 
 
+def check_cohort_attrition_completeness(outputs: dict, orch) -> tuple:
+    """OEMC-R10: Methods 中每条纳排标准必须在 cohort_attrition 中有对应步骤.
+
+    Gate 3 (执行阶段) 执行此检查:
+    1. 读取 Methods 中的纳入/排除标准列表
+    2. 读取 cohort_attrition.json 的每个 step.maps_to_methods
+    3. Methods 标准 ⊂ cohort_attrition steps → PASS
+       否则 → FAIL: 列出缺失的标准
+    """
+    import json, re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        return True, "跳过 (无 project_dir)"
+
+    base = Path(project_dir)
+    methods_path = base / "sections" / "04_methods.md"
+    cohort_path = base / "cohort_attrition.json"
+
+    if not methods_path.exists():
+        return True, "跳过 (methods.md 不存在)"
+    if not cohort_path.exists():
+        return False, (
+            "队列筛选完整性检查失败: cohort_attrition.json 不存在。"
+            "Phase 3 必须产出此文件, 每条纳排标准对应一个步骤。"
+        )
+
+    methods_text = methods_path.read_text(encoding="utf-8")
+    try:
+        cohort = json.loads(cohort_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False, "队列筛选完整性检查失败: cohort_attrition.json 无法解析"
+
+    # 从 Methods 提取纳入/排除标准
+    # 匹配纳入标准区域: "We included..." 或 "Inclusion criteria..."
+    criteria_from_methods = []
+
+    # 提取纳入标准
+    inc_m = re.search(
+        r'We included\s+(.+?)(?:\.\s+We excluded|\.\s+(?:For|The|A\s))',
+        methods_text, re.DOTALL
+    )
+    if inc_m:
+        inc_text = inc_m.group(1)
+        # 拆分为子句
+        for clause in re.split(r';\s*|,\s*(?=patients|at least|with\s+an?\s)', inc_text):
+            clause = clause.strip().rstrip('.')
+            if len(clause) > 15:
+                criteria_from_methods.append(("inclusion", clause[:120]))
+
+    # 提取排除标准
+    exc_m = re.search(
+        r'We excluded\s+(.+?)(?:\.\s+(?:For|The|A\s|Baseline|All))',
+        methods_text, re.DOTALL
+    )
+    if exc_m:
+        exc_text = exc_m.group(1)
+        for clause in re.split(r';\s*|,\s*(?=patients)', exc_text):
+            clause = clause.strip().rstrip('.')
+            if len(clause) > 10:
+                criteria_from_methods.append(("exclusion", clause[:120]))
+
+    if not criteria_from_methods:
+        return True, "跳过 (未能从 Methods 自动提取纳排标准, 建议人工核对)"
+
+    # 从 cohort_attrition 提取已记录的步骤
+    cohort_steps = []
+    if isinstance(cohort, list):
+        # 旧格式: list of dicts
+        for s in cohort:
+            if isinstance(s, dict) and s.get("step"):
+                cohort_steps.append(s["step"])
+    elif isinstance(cohort, dict):
+        for s in cohort.get("steps", []):
+            maps_to = s.get("maps_to_methods", "") or s.get("criterion", "") or s.get("step", "")
+            cohort_steps.append(maps_to)
+
+    # 反向匹配: 每个 Methods 标准是否在 cohort_attrition 中有对应步骤
+    missing = []
+    for ctype, criterion in criteria_from_methods:
+        found = False
+        for cs in cohort_steps:
+            # 通过关键词重叠判断匹配
+            keywords = re.findall(r'\b\w{4,}\b', criterion.lower())
+            if keywords:
+                overlap = sum(1 for kw in keywords if kw in cs.lower())
+                if overlap >= 2:
+                    found = True
+                    break
+        if not found:
+            missing.append(f"[{ctype}] {criterion}")
+
+    if missing:
+        return False, (
+            f"队列筛选完整性检查失败 — Methods 定义了 {len(criteria_from_methods)} 条纳排标准, "
+            f"但 cohort_attrition.json 中缺少 {len(missing)} 条的对应步骤:\n" +
+            "\n".join(f"  • {m}" for m in missing) +
+            "\n请为每条缺失标准在 cohort_attrition.json 中补充步骤和排除人数。"
+        )
+
+    return True, (
+        f"队列筛选完整性通过: Methods {len(criteria_from_methods)} 条纳排标准 "
+        f"均在 cohort_attrition.json 中有对应步骤 ✓"
+    )
+
+
+def check_results_exclusion_text_consistency(outputs: dict, orch) -> tuple:
+    """OEMC-R10: Results 排除原因文字必须从 cohort_attrition 数据派生.
+
+    Gate 6 (写作阶段) 执行此检查:
+    1. 读取 Results 中 "primary reasons for exclusion" 文字
+    2. 读取 cohort_attrition.json 中各步骤的 n_excluded
+    3. 按 n_excluded 降序 → Results 声称的 reasons 是否与 top N 一致
+    4. 术语检查: inclusion 失败 ≠ exclusion
+    """
+    import json, re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        return True, "跳过 (无 project_dir)"
+
+    base = Path(project_dir)
+    results_path = base / "sections" / "05_results.md"
+    cohort_path = base / "cohort_attrition.json"
+
+    if not results_path.exists():
+        return True, "跳过 (results.md 不存在)"
+    if not cohort_path.exists():
+        return True, "跳过 (cohort_attrition.json 不存在)"
+
+    results_text = results_path.read_text(encoding="utf-8")
+    try:
+        cohort = json.loads(cohort_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return True, "跳过 (cohort_attrition.json 无法解析)"
+
+    # 提取 Results 中的 "primary reasons for exclusion"
+    primary_match = re.search(
+        r'primary reasons for exclusion were\s+(.+?)(?:\.|$)',
+        results_text, re.IGNORECASE
+    )
+    if not primary_match:
+        # 没有这句 → 不算fail, 但提示
+        return True, "跳过 (Results 中未找到'primary reasons for exclusion'声明)"
+
+    claimed_reasons_raw = primary_match.group(1)
+    # 拆分为独立原因
+    claimed_reasons = [r.strip().rstrip('.') for r in re.split(r',\s*(?:and\s*)?', claimed_reasons_raw) if len(r.strip()) > 5]
+
+    # 从 cohort_attrition 提取步骤和排除人数
+    steps_with_n = []
+    if isinstance(cohort, list):
+        for i, s in enumerate(cohort):
+            if i == 0:
+                continue  # skip first (total)
+            step_name = s.get("step", "")
+            n_before = s.get("n_before", 0) or 0
+            n_after = s.get("n", 0) or 0
+            n_excluded = n_before - n_after if n_before else 0
+            # 推断 criterion_type
+            ctype = "exclusion" if "exclude" in step_name.lower() else "inclusion"
+            steps_with_n.append((step_name, n_excluded, ctype))
+    elif isinstance(cohort, dict):
+        for s in cohort.get("steps", []):
+            step_name = s.get("criterion", "") or s.get("step", "")
+            n_excluded = s.get("n_excluded", 0) or 0
+            ctype = s.get("criterion_type", "inclusion")
+            steps_with_n.append((step_name, n_excluded, ctype))
+
+    if not steps_with_n:
+        return True, "跳过 (cohort_attrition 中无步骤数据)"
+
+    # 按 n_excluded 降序排列
+    steps_sorted = sorted(steps_with_n, key=lambda x: x[1], reverse=True)
+
+    # 检查 1: "primary reasons" 是否确实对应最大的 n_excluded
+    top_n = min(len(claimed_reasons), len(steps_sorted))
+    top_reasons = [s[0] for s in steps_sorted[:top_n]]
+
+    # 通过关键词重叠匹配
+    mismatches = []
+    for i, claimed in enumerate(claimed_reasons):
+        claimed_keywords = set(re.findall(r'\b\w{4,}\b', claimed.lower()))
+        best_overlap = 0
+        best_match = ""
+        for step_name, _, _ in steps_with_n:
+            step_keywords = set(re.findall(r'\b\w{4,}\b', step_name.lower()))
+            overlap = len(claimed_keywords & step_keywords)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_match = step_name
+        if best_overlap < 2:
+            mismatches.append(f"'{claimed}' → 在 cohort_attrition 中无匹配步骤 (最佳: '{best_match}', overlap={best_overlap})")
+
+    # 检查 2: inclusion 失败被错误称为 "exclusion"
+    terminology_issues = []
+    for claimed in claimed_reasons:
+        claimed_lower = claimed.lower()
+        # 提取匹配的步骤的 criterion_type
+        for step_name, _, ctype in steps_with_n:
+            if any(kw in claimed_lower for kw in re.findall(r'\b\w{4,}\b', step_name.lower())[:3]):
+                if ctype == "inclusion" and "exclu" in claimed_lower:
+                    # inclusion 失败被称为 exclusion → 术语不一致
+                    pass  # 仅记录, 不阻断
+                if ctype == "inclusion":
+                    terminology_issues.append(
+                        f"'{claimed}' — 对应步骤 '{step_name}' 是 inclusion 条件, "
+                        f"应表述为 'did not meet inclusion criteria' 而非 'exclusion'"
+                    )
+                break
+
+    violations = mismatches
+    if mismatches:
+        return False, (
+            f"Results 排除原因与 cohort_attrition 不一致:\n" +
+            "\n".join(f"  • {m}" for m in mismatches) +
+            f"\n\ncohort_attrition 中按 n_excluded 降序排列的步骤:\n" +
+            "\n".join(f"  • {s[0]}: n_excluded={s[1]:,}" for s in steps_sorted)
+        )
+
+    notes = ""
+    if terminology_issues:
+        notes = " (术语提示: " + "; ".join(terminology_issues[:2]) + ")"
+
+    return True, (
+        f"Results 排除原因与 cohort_attrition 一致: "
+        f"{len(claimed_reasons)} 条声称原因均可在 cohort_attrition 中找到对应步骤{notes}"
+    )
+
+
 # ================================================================
+def check_outcome_operationalization_table(outputs: dict, orch) -> tuple:
+    """OEMC-R11: SAP 必须包含结局操作化对照表.
+
+    Gate 2 (方案设计) 执行此检查:
+    SAP 中必须将结局定义的指南原文与本研究操作化逐条对照,
+    每条偏离注明理由.
+    """
+    import re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        return True, "跳过 (无 project_dir)"
+
+    sap_path = Path(project_dir) / "sap.md"
+    if not sap_path.exists():
+        return True, "跳过 (sap.md 不存在)"
+
+    sap_text = sap_path.read_text(encoding="utf-8")
+
+    # 检查是否存在结局操作化章节
+    section_match = re.search(
+        r'#{1,3}\s*(?:\d+\.?\d*\s+)?(?:Outcome|结局)\s*(?:Operationalization|操作化)',
+        sap_text, re.IGNORECASE
+    )
+    if not section_match:
+        return False, (
+            "SAP 缺少结局操作化对照表。"
+            "Phase 2 必须在 SAP 中新增 '## Outcome Operationalization' 章节, "
+            "以表格形式逐条对照: 指南原文 | 本研究操作化 | 差异 | 理由。"
+            "参考 OEMC-R11 (指南溯源原则)。"
+        )
+
+    # 检查表格是否包含必需的列
+    required_cols = ["指南", "guideline", "操作化", "operationaliz", "差异", "deviation", "理由", "rationale"]
+    table_section = sap_text[section_match.start():]
+    # 找表格后的第一个空行或下一个 ## 标题
+    next_section = re.search(r'\n(?:##?\s|\n\n)', table_section[table_section.find('\n'):])
+    table_area = table_section if not next_section else table_section[:table_section.find('\n') + next_section.start()]
+
+    found_cols = 0
+    for col in required_cols:
+        if re.search(col, table_area, re.IGNORECASE):
+            found_cols += 1
+
+    if found_cols < 3:
+        return False, (
+            f"结局操作化对照表格式不完整 (检测到 {found_cols} 个必需列关键词, "
+            f"需要 ≥3)。"
+            "表格必须包含列: 指南原文 | 本研究操作化 | 差异 | 理由。"
+        )
+
+    return True, "结局操作化对照表存在且格式完整 ✓"
+
+
+def check_guideline_attribution_accuracy(outputs: dict, orch) -> tuple:
+    """OEMC-R11: 指南引用后的括号内容不得包含本研究操作化细节.
+
+    Gate 6 (写作阶段) 执行此检查:
+    扫描 Methods/Abstract 中 "defined according to [guideline] (xxx)" 模式,
+    括号中的 xxx 若包含非指南原文的操作化细节 → FAIL.
+
+    操作化细节必须在独立句子中说明, 不得与指南引用混在同一括号或从句中.
+    """
+    import re
+    from pathlib import Path
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        return True, "跳过 (无 project_dir)"
+
+    base = Path(project_dir)
+    violations = []
+
+    # 需要检查的文件
+    check_files = [
+        base / "sections" / "04_methods.md",
+        base / "sections" / "02_abstract.md",
+    ]
+
+    # 指南引用模式: "defined according to [Guideline] (details)"
+    guideline_pattern = re.compile(
+        r'defined\s+according\s+to\s+the\s+(\w[\w\s]+?(?:criteria|criterion|guideline|definition))\s*'
+        r'\(([^)]+)\)',
+        re.IGNORECASE
+    )
+
+    # 本研究操作化的标志词 — 这些不应出现在指南引用括号中
+    operational_markers = [
+        r'\bexcluding\b', r'\bexclude\b',
+        r'\bfirst\s+24\s+hours?\b', r'\b24[-\s]?hour\b',
+        r'\boperationalized\b', r'\bbaseline\s+defined\b',
+        r'\bin\s+this\s+study\b', r'\bwe\s+(defined|used|employed)\b',
+        r'\brather\s+than\b', r'\b本研究\b',
+    ]
+
+    for fpath in check_files:
+        if not fpath.exists():
+            continue
+
+        text = fpath.read_text(encoding="utf-8")
+        for m in guideline_pattern.finditer(text):
+            guideline_name = m.group(1)
+            paren_content = m.group(2)
+
+            for marker in operational_markers:
+                if re.search(marker, paren_content, re.IGNORECASE):
+                    violations.append(
+                        f"{fpath.name}: 'defined according to {guideline_name} ({paren_content[:80]}...)' — "
+                        f"括号内含操作化细节 (匹配: {marker})。"
+                        f"操作化细节应在独立句子中说明。"
+                    )
+                    break  # 每个匹配只报告一次
+
+    if violations:
+        return False, (
+            f"指南溯源检查失败 — {len(violations)} 处指南引用括号中混入操作化细节:\n" +
+            "\n".join(f"  • {v}" for v in violations[:5]) +
+            "\n\n修正: 指南引用后只写指南原文定义; 操作化细节以 'In this study, we operationalized...' 独立句说明。"
+        )
+
+    checked = len([f for f in check_files if f.exists()])
+    return True, f"指南溯源通过: {checked} 个文件中指南引用括号不含操作化细节 ✓"
+
+
 # 医学论文数值精度标准 — 钱学森总体设计部: 接口格式标准化
 # ================================================================
 
@@ -3810,6 +4553,519 @@ def check_imrad_word_budget(outputs: dict, orch) -> tuple:
 
 
 # ============================================================
+# Phase 6: Table 1 分层数据来源验证 (2026-05-24)
+# ============================================================
+def check_table_stratification_provenance(outputs: dict, orch) -> tuple:
+    """验证 Table 1 分层变量来自真实数据源（features_cache.pkl），非 np.random 模拟。
+
+    跨事业部通用: 检测 eFI / frailty_index / Gleason / risk_score 等分层变量。
+    """
+    import os
+    import re
+    import json
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Step 1: Scan generate_tables.py for np.random injection
+    gen_tables = proj_dir / "scripts" / "generate_tables.py"
+    if not gen_tables.exists():
+        gen_tables = proj_dir / "generate_tables.py"
+    if not gen_tables.exists():
+        return True, "跳过 (未找到 generate_tables.py)"
+
+    source = gen_tables.read_text(encoding="utf-8")
+    violations = []
+
+    for i, line in enumerate(source.split("\n"), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        # np.random used for data generation (not seed/RandomState)
+        m = re.match(r'(\w+)\s*=\s*np\.random\.(?!seed\b|RandomState\b)(\w+)\(', stripped)
+        if m:
+            var_name = m.group(1).lower()
+            func = m.group(2)
+            data_kw = r'(efi|frail|strata|stratum|group_label|risk_score|grade|stage|label|class|cluster|synthetic)'
+            if re.search(data_kw, var_name):
+                ctx = "\n".join(source.split("\n")[max(0,i-3):min(len(source.split("\n")),i+8)])
+                if re.search(r'(Table|table|stratif|group.*by|patients?|cohort)', ctx):
+                    violations.append(f"L{i}: np.random.{func}() -> '{var_name}' in stratification context")
+
+        if re.search(r'(simulate|synthetic).*?(data|score|strata|cohort|patient)', stripped, re.IGNORECASE):
+            violations.append(f"L{i}: simulated/synthetic keyword: {stripped[:100]}")
+
+    # Step 2: Verify stratification source — features_cache.pkl or strata_labels.pkl
+    uses_pkl = bool(re.search(r'(features_cache\.pkl|cache\[.?X.?\])', source))
+
+    # Step 3: Cross-validate Table 1 values against pkl
+    pkl_path = proj_dir / "outputs" / "features_cache.pkl"
+    table1_md = proj_dir / "tables" / "Table1_baseline.md"
+    pkl_deviations = []
+
+    if pkl_path.exists() and table1_md.exists():
+        import pickle
+        try:
+            with open(pkl_path, "rb") as f:
+                cache = pickle.load(f)
+            X = cache.get("X", cache)
+
+            strata_col = None
+            for col in ["efi_score", "frailty_index", "FI_score", "gleason_score", "risk_score"]:
+                if hasattr(X, "columns") and col in X.columns:
+                    strata_col = col
+                    break
+
+            if strata_col is not None:
+                efi_real = X[strata_col].values
+                robust_real = efi_real[efi_real < 0.10]
+                prefrail_real = efi_real[(efi_real >= 0.10) & (efi_real < 0.25)]
+                frail_real = efi_real[efi_real >= 0.25]
+
+                t1_text = table1_md.read_text(encoding="utf-8")
+
+                efi_row = re.search(
+                    r"eFI.*?\|\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\).*?\|"
+                    r"\s*([\d.]+)\s*\(([\d.]+)\)",
+                    t1_text
+                )
+
+                if efi_row:
+                    t1_overall = float(efi_row.group(1))
+                    pkl_mean = float(efi_real.mean())
+                    dev = abs(t1_overall - pkl_mean) / max(pkl_mean, 0.001) * 100
+                    if dev > 0.5:
+                        pkl_deviations.append(f"eFI mean: Table1={t1_overall:.4f} vs pkl={pkl_mean:.4f} ({dev:.1f}%)")
+
+                    for g_idx, g_name, g_data in [
+                        (3, "Robust", robust_real), (5, "Pre-frail", prefrail_real), (7, "Frail", frail_real)
+                    ]:
+                        if efi_row.group(g_idx):
+                            t1_val = float(efi_row.group(g_idx))
+                            pkl_val = float(g_data.mean()) if len(g_data) > 0 else 0
+                            if pkl_val > 0:
+                                d = abs(t1_val - pkl_val) / pkl_val * 100
+                                if d > 0.5:
+                                    pkl_deviations.append(f"{g_name}: Table1={t1_val:.4f} vs pkl={pkl_val:.4f} ({d:.1f}%)")
+        except Exception as e:
+            pkl_deviations.append(f"pkl validation error: {str(e)}")
+
+    if violations:
+        return False, f"Data-injection patterns detected: {'; '.join(violations)}"
+    if pkl_deviations:
+        return False, f"Table 1 deviates from pkl: {'; '.join(pkl_deviations)}"
+    return True, f"Source={'pkl' if uses_pkl else 'verified'}, violations=0, pkl_deviations=0"
+
+
+# ============================================================
+# Phase 6: Vancouver 参考文献顺序检查 (2026-05-24)
+# ============================================================
+def check_vancouver_reference_order(outputs: dict, orch) -> tuple:
+    """验证参考文献按首次引用顺序编号（Vancouver 风格）。
+
+    跨事业部通用: 读取 manuscript 正文引用顺序并与 References 列表对比。
+    """
+    import os
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Find manuscript
+    manuscript_path = proj_dir / "submission" / "manuscript.md"
+    if not manuscript_path.exists():
+        return True, "跳过 (未找到 manuscript.md)"
+
+    manuscript = manuscript_path.read_text(encoding="utf-8")
+
+    # Cut at References section
+    ref_match = re.search(r"\n#+\s*References?\s*\n", manuscript)
+    body = manuscript[:ref_match.start()] if ref_match else manuscript
+
+    seen = []
+    violations = []
+    for match in re.finditer(r"\[(\d+(?:,\d+)*)\]", body):
+        nums = [int(x) for x in match.group(1).split(",")]
+        for n in nums:
+            if n not in seen:
+                seen.append(n)
+                expected = len(seen)
+                if n != expected:
+                    violations.append(f"[{n}] at position {expected} (should be [{expected}])")
+
+    if not seen:
+        return True, "跳过 (正文中未找到引用)"
+
+    # Check reference list is sequential 1..N
+    ref_nums = set()
+    for m in re.finditer(r"^(\d+)\.\s", manuscript, re.MULTILINE):
+        ref_nums.add(int(m.group(1)))
+    expected_refs = set(range(1, len(seen) + 1))
+    missing = expected_refs - ref_nums
+    extra = ref_nums - expected_refs
+
+    if violations or missing or extra:
+        details = []
+        if violations:
+            details.append(f"Order: {'; '.join(violations[:5])}")
+        if missing:
+            details.append(f"Body refs missing from list: {sorted(missing)}")
+        if extra:
+            details.append(f"List refs not in body: {sorted(extra)}")
+        return False, " | ".join(details)
+
+    max_ref = max(ref_nums) if ref_nums else 0
+    return True, f"{len(seen)} refs in Vancouver order, 1..{max_ref} sequential"
+
+
+def check_methods_no_result_language(outputs: dict, orch) -> tuple:
+    """OEMC-R9: Methods 因果方向原则 — Methods 不能包含事后绩效断言.
+
+    Methods 中出现的 "was selected based on superior calibration"
+    这类陈述意味着 writer 在执行后才选择模型, 因果倒置。
+    Methods 只能描述 SAP 中预设的方案, 执行结果的选择理由属于 Discussion。
+    """
+    from pathlib import Path
+    import re
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    methods_path = Path(project_dir) / "sections" / "04_methods.md" if project_dir else None
+    if not methods_path or not methods_path.exists():
+        return True, "跳过 (methods.md 不存在)"
+
+    text = methods_path.read_text(encoding="utf-8")
+
+    forbidden = [
+        (r'was\s+(designated|selected|chosen)\s+as\s+(the\s+)?primary\s+model\s+based\s+on\s+\w+\s+(performance|calibration|discrimination)',
+         "事后绩效理由: model designated based on [performance/calibration/discrimination]"),
+        (r'(outperformed|demonstrated\s+superior\s+\w+|showed\s+better\s+\w+)',
+         "比较级断言: outperformed/demonstrated superior/showed better"),
+        (r'preliminary\s+analyses\s+(showed|revealed|indicated)',
+         "回溯引用: preliminary analyses showed/revealed/indicated"),
+    ]
+
+    violations = []
+    for pattern, desc in forbidden:
+        if re.search(pattern, text, re.IGNORECASE):
+            violations.append(desc)
+
+    if violations:
+        return False, (
+            f"Methods 因果倒置: {len(violations)} 处事后绩效断言。"
+            f"Methods 只能描述 SAP 预设方案, 执行结果的模型选择理由应移至 Discussion。"
+            f"违规: {'; '.join(violations)}。"
+            f"参考 OEMC-R9 (Methods 因果方向原则)。"
+        )
+    return True, "Methods 未包含事后绩效断言"
+
+
+def check_sap_methods_consistency(outputs: dict, orch) -> tuple:
+    """SAP↔Methods 预指定一致性检查.
+
+    SAP 中预设的 '主要模型' 必须与 Methods 中声明的 primary model 一致。
+    若不一致, 必须有正式 CR (CR-model-switch-*) 记录变更。
+    此检查确保 'Methods 只能从 SAP 往下推' 原则的落实。
+    """
+    from pathlib import Path
+    import re
+    import json
+
+    project_dir = getattr(orch, '_current_project_dir', None)
+    if not project_dir:
+        return True, "跳过 (无 project_dir)"
+
+    base = Path(project_dir)
+    sap_path = base / "sap.md"
+    methods_path = base / "sections" / "04_methods.md"
+
+    if not sap_path.exists():
+        return True, "跳过 (sap.md 不存在)"
+
+    sap_text = sap_path.read_text(encoding="utf-8")
+    # 从 SAP 表格中提取 "主要模型" 值
+    sap_primary = None
+    m = re.search(r'\|\s*\*?\*?主要模型\*?\*?\s*\|\s*(\w[\w\s-]*?)\s*\|', sap_text)
+    if m:
+        sap_primary = m.group(1).strip()
+    if not sap_primary:
+        return True, "跳过 (SAP 中未找到'主要模型'字段)"
+
+    methods_text = methods_path.read_text(encoding="utf-8") if methods_path.exists() else ""
+    # 从 Methods 中提取 primary model 声明
+    # 支持两种语序: "RF was pre-specified as primary" 或 "pre-specified as primary: RF"
+    methods_primary = None
+    for pattern in [
+        # 语序1: ModelName was pre-specified/designated as the primary model
+        r'(Random\s*Forest|XGBoost|Logistic\s*Regression|LASSO|CatBoost|LightGBM)\s+was\s+(?:pre-specified|designated)\s+as\s+the\s+primary\s+model',
+        # 语序2: pre-specified/designated as the primary model ... ModelName
+        r'(?:was\s+)?(?:pre-specified|designated)\s+as\s+the\s+primary\s+model[^.]*?(Random\s*Forest|XGBoost|Logistic\s*Regression|LASSO|CatBoost|LightGBM)',
+    ]:
+        m = re.search(pattern, methods_text, re.IGNORECASE)
+        if m:
+            methods_primary = m.group(1).strip()
+            break
+
+    # 标准化比较
+    def normalize(name):
+        n = name.lower().replace(" ", "").replace("-", "")
+        if "randomforest" in n or "rf" == n:
+            return "randomforest"
+        if "xgboost" in n or "xgb" in n:
+            return "xgboost"
+        if "logistic" in n or "lasso" in n:
+            return "logisticregression"
+        return n
+
+    if methods_primary and normalize(sap_primary) != normalize(methods_primary):
+        # 检查是否有 CR 记录
+        cr_files = list(base.glob("CR-model-switch-*"))
+        cr_records = list(base.glob("change_request*model*"))
+        if not cr_files and not cr_records:
+            return False, (
+                f"SAP 预设主要模型为 '{sap_primary}', "
+                f"但 Methods 声称 primary model 为 '{methods_primary}'。"
+                f"两者不一致且无正式 CR 记录 (CR-model-switch-*)。"
+                f"请补交 CR 记录模型切换理由, 或将 Methods 回退至 SAP 预设。"
+            )
+        # 有 CR → 条件通过
+        return True, (
+            f"SAP 预设 '{sap_primary}' ≠ Methods 声称 '{methods_primary}', "
+            f"但找到 CR 记录 ({len(cr_files or cr_records)} 个) → COND_PASS"
+        )
+
+    if methods_primary:
+        return True, f"SAP 预设 '{sap_primary}' = Methods 声称 '{methods_primary}' ✅"
+    return True, f"SAP 预设 '{sap_primary}', Methods 中未找到 primary model 具体声明"
+
+
+def check_lesson_rules_compliance(outputs: dict, orch) -> tuple:
+    """知识管理部 B环 #10: 扫描所有历史项目的 lessons-learned 经验规则,
+    与当前项目脚本 diff, 发现违反项则阻断。
+
+    此检查确保"一个项目发现的代码安全问题, 不会在下一个项目中重复"。
+    """
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    kb = getattr(orch, 'kb', None)
+    if not kb:
+        return True, "跳过 (知识库管理器未初始化)"
+
+    # 1. 扫描所有项目的经验规则
+    try:
+        rules = kb.scan_lessons_learned()
+    except Exception as e:
+        return True, f"跳过 (经验规则扫描异常: {e})"
+
+    if not rules:
+        return True, "无历史经验规则需要检查"
+
+    # 2. 将规则与当前项目脚本 diff
+    try:
+        violations = kb.diff_rules_against_scripts(rules, proj_dir)
+    except Exception as e:
+        return True, f"跳过 (规则 diff 异常: {e})"
+
+    if not violations:
+        return True, f"经验规则检查通过 ({len(rules)} 条规则, 0 违反)"
+
+    # 3. 按 severity 分组报告
+    criticals = [v for v in violations if v["severity"] == "critical"]
+    highs = [v for v in violations if v["severity"] == "high"]
+
+    detail_parts = [f"违反 {len(violations)} 条经验规则 "
+                    f"(critical: {len(criticals)}, high: {len(highs)})"]
+
+    for v in violations[:5]:  # 列前 5 条
+        detail_parts.append(
+            f"[{v['rule_id']}] {v['file']}:{v['line']} — {v['match'][:60]}"
+        )
+        if v.get("fix"):
+            detail_parts.append(f"  → Fix: {v['fix']}")
+
+    detail = "\n  ".join(detail_parts)
+
+    # critical 违反 → 直接 FAIL
+    if criticals:
+        return False, detail
+
+    return False, detail
+
+
+# ============================================================
+# Phase 6: Figure numbering continuity (2026-05-24)
+# ============================================================
+def check_figure_numbering_continuity(outputs: dict, orch) -> tuple:
+    """Figure 编号连续性检查 — 验证 Figure 1 存在且编号连续。
+
+    钱学森模块一+二: 内容完整性传感器 — 图数量 >= 3 不能保证 Figure 1 存在。
+    若有 cohort_attrition.json → Figure 1 强制存在。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    figures_dir = proj_dir / 'figures'
+    if not figures_dir.exists():
+        return True, "跳过 (figures/ 目录不存在)"
+
+    png_files = list(figures_dir.glob('*.png'))
+    if not png_files:
+        return True, "跳过 (figures/ 下无 .png 文件)"
+
+    # Extract figure numbers: Figure[N]_*.png
+    figure_nums = set()
+    for f in png_files:
+        m = re.match(r'Figure(\d+)_', f.name)
+        if m:
+            figure_nums.add(int(m.group(1)))
+
+    if not figure_nums:
+        return True, "跳过 (不符合 Figure[N]_ 命名规范)"
+
+    sorted_nums = sorted(figure_nums)
+    expected_start = 1
+
+    # Check: cohort_attrition.json exists → Figure 1 mandatory
+    cohort_file = proj_dir / 'cohort_attrition.json'
+    if cohort_file.exists() and 1 not in figure_nums:
+        return False, (
+            "Figure 1 (cohort attrition flowchart) 缺失 — "
+            "cohort_attrition.json 存在但 figures/ 下无 Figure1_*.png"
+        )
+
+    # Check numbering continuity
+    expected = list(range(sorted_nums[0], sorted_nums[-1] + 1))
+    missing = set(expected) - figure_nums
+    if missing:
+        return False, (
+            f"Figure 编号不连续: 现有 {sorted_nums}, 缺失 {sorted(missing)}"
+        )
+
+    return True, f"Figure 编号连续: Figure {sorted_nums[0]}–{sorted_nums[-1]} ({len(sorted_nums)} 张)"
+
+
+# ============================================================
+# Phase 6: Table 1 content completeness (2026-05-24)
+# ============================================================
+def check_table1_content_completeness(outputs: dict, orch) -> tuple:
+    """Table 1 内容完整性检查 — 扫描占位符占比。
+
+    钱学森模块一+二: 内容填充率传感器。
+    单元格为 '—' / '\\u2014' / 'N/A' / 空字符串 → 计入缺失。
+    fill_rate < 80% → FAIL, fill_rate < 100% → COND_PASS。
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # Try .md first, then .csv
+    table1_md = proj_dir / 'tables' / 'Table1_baseline.md'
+    if not table1_md.exists():
+        return True, "跳过 (tables/Table1_baseline.md 不存在)"
+
+    content = table1_md.read_text(encoding='utf-8')
+
+    # Parse markdown table rows (skip header and separator)
+    lines = content.split('\n')
+    data_rows = []
+    in_table = False
+    for line in lines:
+        line = line.strip()
+        if line.startswith('|') and '---' not in line:
+            if 'Characteristic' in line:
+                in_table = True
+                continue
+            if in_table:
+                data_rows.append(line)
+
+    if not data_rows:
+        return True, "跳过 (Table 1 无数据行)"
+
+    # Count placeholder cells
+    placeholder_pattern = re.compile(
+        r'^\s*(—|—|N/?A|[—―])\s*$'
+    )
+    total_cells = 0
+    empty_cells = 0
+    empty_details = []
+
+    for row in data_rows:
+        cells = [c.strip() for c in row.split('|')]
+        # Filter out leading/trailing empty strings from split
+        cells = [c for c in cells if c]
+        # Summary row detection: rows where col0 is just "N" have no p-value by design
+        is_summary_row = (len(cells) > 0 and cells[0].strip() == 'N')
+        for i, cell in enumerate(cells):
+            # Skip p-value column (last column) for summary row
+            if is_summary_row and i == len(cells) - 1:
+                continue
+            total_cells += 1
+            if placeholder_pattern.match(cell) or cell == '':
+                empty_cells += 1
+                # Find the characteristic name (first column)
+                if i > 0 and cells[0]:
+                    empty_details.append(cells[0][:40])
+
+    if total_cells == 0:
+        return True, "跳过 (Table 1 无可解析单元格)"
+
+    fill_rate = 1.0 - empty_cells / total_cells
+
+    if fill_rate < 0.80:
+        return False, (
+            f"Table 1 内容填充率 {fill_rate:.0%} < 80% "
+            f"({empty_cells}/{total_cells} cells empty). "
+            f"空单元格变量: {', '.join(empty_details[:8])}"
+        )
+
+    if fill_rate < 1.0:
+        return False, (
+            f"Table 1 内容填充率 {fill_rate:.0%} ({empty_cells}/{total_cells} cells empty). "
+            f"空单元格: {', '.join(empty_details[:5])}. "
+            f"若变量确实不可用，需在 Methods 中说明"
+        )
+
+    return True, f"Table 1 内容填充率 100% ({total_cells} 个单元格全部有值)"
+
+
+
+# ============================================================
 # 闸门定义: 每个 Phase 执行的检查项
 # ============================================================
 
@@ -3817,6 +5073,7 @@ GATE_DEFINITIONS = {
     "problem_definition": {
         "auto_checks": {
             "lit_precheck": check_literature_precheck_exists,
+            "review_gap": check_review_gap_analysis_exists,
             "frame_complete": check_frame_assessment_complete,
             "data_availability": check_data_availability_confirmed,
             "data_dictionary": check_data_dictionary_exists,
@@ -3834,11 +5091,13 @@ GATE_DEFINITIONS = {
             "sensitivity_analysis_count": check_sensitivity_analysis_count,
             "subgroup_count": check_subgroup_count,
             "smd_balance": check_smd_balance,
+            "outcome_operationalization_table": check_outcome_operationalization_table,  # 2026-05-26: OEMC-R11
         },
         "llm_checks": [
             "建模方案与临床问题是否对齐 (PICO-ML 映射)?",
             "SAP 是否包含样本量/缺失处理/敏感性分析?",
             "模型评估策略是否合理 (内部+外部验证)?",
+            "结局操作化对照表是否完整? 每条操作化偏离是否注明指南原文和理由?",
         ],
     },
     "execution": {
@@ -3849,6 +5108,8 @@ GATE_DEFINITIONS = {
             "n_jobs_safe": check_n_jobs_safe,
             "calibration_trend": check_calibration_trend,  # 🆕 Δ-Gate: 校准度趋势
             "all_models_evaluated": check_all_models_evaluated_completely,  # 🆕 所有模型指标完整
+            "lesson_rules": check_lesson_rules_compliance,  # 🆕 经验规则传播 (B环 #10)
+            "cohort_attrition_completeness": check_cohort_attrition_completeness,  # 2026-05-26: OEMC-R10 纳排标准全追溯
         },
         "llm_checks": [
             "模型选择层级是否合理 (baseline → 复杂模型)?",
@@ -3929,6 +5190,18 @@ GATE_DEFINITIONS = {
             "imrad_methods_results_1to1": check_methods_results_1_to_1,
             "imrad_word_budget": check_imrad_word_budget,
             "imrad_blueprint_exists": check_imrad_blueprint_exists,
+            "stratification_provenance": check_table_stratification_provenance,
+            "vancouver_order": check_vancouver_reference_order,
+            "lesson_rules": check_lesson_rules_compliance,  # 🆕 经验规则传播 (B环 #10)
+            "figure_numbering_continuity": check_figure_numbering_continuity,    # 2026-05-24: Figure 1 存在 + 编号连续
+            "table1_content_completeness": check_table1_content_completeness,    # 2026-05-24: Table 1 占位符扫描
+            "methods_no_result_language": check_methods_no_result_language,      # 2026-05-26: Methods 因果方向原则
+            "sap_methods_consistency": check_sap_methods_consistency,            # 2026-05-26: SAP↔Methods 预指定一致性
+            "results_exclusion_text_consistency": check_results_exclusion_text_consistency,  # 2026-05-26: OEMC-R10 排除原因可追溯
+            "guideline_attribution_accuracy": check_guideline_attribution_accuracy,  # 2026-05-26: OEMC-R11 指南溯源
+            "reference_claim_mapping": check_reference_claim_mapping,              # 2026-05-26: OEMC-R12 参考文献-声明可追溯
+            "reference_source_tier": check_reference_source_tier,                  # 2026-05-26: OEMC-R13 来源层级 L3阻断
+            "reference_spot_audit": check_reference_spot_audit,                    # 2026-05-26: OEMC-R13 随机抽检
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

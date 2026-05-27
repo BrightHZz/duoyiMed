@@ -13,6 +13,7 @@ Pipeline:
   Step 4: Humanize  (Python+LLM) → run_humanize.py + LLM naturalness review
   Step 5: Assembly  (Python)  → engine/scripts/run_assembly.py
   Step 6: Gate 6    (Python+LLM) → run_gate6.py + LLM semantic checks (4 items)
+  Step 7: Translate (LLM)     → orchestrator calls translator (EN→CN, non-blocking)
 
 Usage:
     from engine.core.phase6_runner import Phase6Runner
@@ -45,10 +46,11 @@ from datetime import datetime
 
 class Phase6Runner:
     """Encapsulates the full Phase 6 pipeline (preflight → figures → tables →
-    sections(LLM) → humanize → assembly → gate6).
+    sections(LLM) → humanize → assembly → gate6 → translate).
 
     Python steps run as subprocesses with exit code checking.
     LLM steps delegate to the orchestrator's _call_agent() method.
+    Step 7 (translate) is non-blocking: failure does not fail the pipeline.
     """
 
     # Step timeout defaults (seconds)
@@ -60,6 +62,7 @@ class Phase6Runner:
     TIMEOUT_ASSEMBLY = 30
     TIMEOUT_GATE6 = 120
     TIMEOUT_GATE6_LLM = 120
+    TIMEOUT_TRANSLATE = 300
 
     # Engine scripts directory (relative to this file's parent)
     # engine/core/phase6_runner.py → engine/scripts/
@@ -126,6 +129,7 @@ class Phase6Runner:
             ("humanize",   lambda: self._step_humanize()),
             ("assembly",   lambda: self._step_assembly()),
             ("gate6",      lambda: self._step_gate6()),
+            ("translate",  lambda: self._step_translate()),
         ]
 
         for step_name, step_fn in pipeline:
@@ -599,6 +603,78 @@ class Phase6Runner:
                 "result": "fail",
                 "detail": f"LLM Gate 6 semantic checks failed: {e}",
             }]}
+
+    # ================================================================
+    # Step 7: Translate EN → CN (LLM, non-blocking)
+    # ================================================================
+
+    def _step_translate(self) -> dict:
+        """Translate assembled English manuscript to Chinese for reading convenience.
+
+        Reads submission/manuscript.md, calls translator agent via orchestrator,
+        writes submission/manuscript_cn.md.
+
+        This step is NON-BLOCKING: failure does not fail the Phase 6 pipeline.
+        """
+        manuscript_path = self.submission_dir / "manuscript.md"
+        if not manuscript_path.exists():
+            return {"success": True, "translated": False,
+                    "error": "manuscript.md not found — nothing to translate",
+                    "output_file": None}
+
+        manuscript_text = manuscript_path.read_text()
+
+        # Build translation prompt with the translator's standards
+        prompt = (
+            "请将以下英文学术论文手稿翻译为中文。\n\n"
+            "翻译要求：\n"
+            "1. 医学术语使用中国临床医学界通用译名\n"
+            "2. 英文长句拆分为符合中文阅读习惯的短句\n"
+            "3. 被动语态转为主动语态，避免翻译腔\n"
+            "4. 所有数字、统计量、P值原样保留，不做任何改动\n"
+            "5. 表格编号：Table 1 → 表1, Figure 2 → 图2\n"
+            "6. 参考文献列表保持英文原文，不翻译\n"
+            "7. 正文中的引用标记 [1] [1,2] 保持不变\n"
+            "8. Markdown 格式标签（**加粗**, *斜体*, 标题层级）保留\n"
+            "9. 翻译完成后在文末添加："
+            "'> 本文为机器翻译辅助生成的中文版本，仅供内部阅读参考。投稿请以英文原稿为准。'\n\n"
+            f"英文原稿：\n\n{manuscript_text}"
+        )
+
+        if not self.orch:
+            return {"success": True, "translated": False,
+                    "error": "No orchestrator available — translation skipped",
+                    "output_file": None}
+
+        try:
+            translator_id = "shared/translator"
+            if hasattr(self.orch, 'active_division'):
+                div = self.orch.active_division
+                translator_id = f"{div}/translator"
+
+            response = self.orch._call_agent(
+                agent_id=translator_id,
+                task_input=prompt,
+                phase_id="writing_translate",
+                project_id=self.project_id,
+            )
+
+            # Write the Chinese manuscript
+            cn_path = self.submission_dir / "manuscript_cn.md"
+            cn_path.write_text(response, encoding="utf-8")
+
+            return {
+                "success": True,
+                "translated": True,
+                "output_file": str(cn_path),
+                "char_count": len(response),
+                "error": None,
+            }
+
+        except Exception as e:
+            return {"success": True, "translated": False,
+                    "error": f"Translation failed (non-blocking): {e}",
+                    "output_file": None}
 
     # ================================================================
     # Utility Methods

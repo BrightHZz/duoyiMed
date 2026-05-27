@@ -41,6 +41,7 @@ from engine.core.gate_checks import (
     check_software_version_reported,
     check_conclusion_heading_level,
     check_doi_verification,
+    check_doi_title_match,
     check_ref_count,
     check_ref_recency,
     check_all_refs_cited_in_text,
@@ -50,6 +51,10 @@ from engine.core.gate_checks import (
     check_humanize_quality,
     check_numerical_traceability,
     check_numerical_precision_consistency,
+    check_table_stratification_provenance,
+    check_vancouver_reference_order,
+    check_figure_numbering_continuity,
+    check_table1_content_completeness,
 )
 
 
@@ -71,6 +76,7 @@ GATE6_PYTHON_CHECKS = [
     # 引用检查
     ("all_refs_have_doi", check_all_refs_have_doi, "参考文献 DOI 覆盖 ≥80%"),
     ("doi_verified", check_doi_verification, "DOI 验证通过 (fake=0)"),
+    ("doi_title_match", check_doi_title_match, "DOI 标题一致性 — CrossRef 解析验证"),
     ("ref_count", check_ref_count, "参考文献 ≥25/≥45"),
     ("ref_recency", check_ref_recency, "参考文献时效性 ≥80%"),
     ("all_refs_cited", check_all_refs_cited_in_text, "每篇参考文献在正文中被引用"),
@@ -90,6 +96,11 @@ GATE6_PYTHON_CHECKS = [
     # 🆕 数值一致性 + 基线合规 + 投稿层完整性
     ("numerical_traceability", check_numerical_traceability, "数值可追溯性 (偏差 <0.1%)"),
     ("precision_consistency", check_numerical_precision_consistency, "数值精度跨 manuscript/tables/figures 一致"),
+    # 🆕 数据真实性 + 结构规则 (2026-05-24)
+    ("stratification_provenance", check_table_stratification_provenance, "Table 1 分层数据来源验证 (非 np.random)"),
+    ("vancouver_order", check_vancouver_reference_order, "参考文献 Vancouver 编号顺序"),
+    ("figure_numbering_continuity", check_figure_numbering_continuity, "Figure 编号连续性 (Figure 1 存在 + 无跳号)"),
+    ("table1_content_completeness", check_table1_content_completeness, "Table 1 内容完整性 (占位符 ≤ 20%)"),
 ]
 
 
@@ -169,6 +180,16 @@ def run_gate6(project_dir: Path) -> dict:
 
 
 def main():
+    # 检测：如果此脚本被复制到项目 scripts/ 下运行，发出 deprecated 警告
+    _fp = Path(__file__).resolve()
+    if _fp.parent.parent.name != "engine":
+        import warnings
+        warnings.warn(
+            f"此脚本的项目本地副本已过时。请删除并使用引擎版本: "
+            f"python engine/scripts/{_fp.name} --project-dir .",
+            DeprecationWarning, stacklevel=2
+        )
+
     parser = argparse.ArgumentParser(
         description="Gate 6 自动化检查 — 执行 28 项 Python auto check"
     )

@@ -393,6 +393,83 @@ class BaselineManager:
         except Exception:
             return None
 
+    def supersede_downstream_reviews(
+        self, project_id: str, from_phase_id: str
+    ):
+        """返工后作废下游 Phase 的审查产物。
+
+        当 Phase N 因返工重新执行后, Phase N+1 至 Phase N+2 的审查产物
+        (review-*.md, gate_report_phase*.json) 中引用的旧基线数值可能已失效。
+        此方法将这些产物标记为 superseded, 强制下游审查重新执行。
+
+        Args:
+            project_id: 项目 ID
+            from_phase_id: 被返工的 Phase (如 'execution')
+        """
+        import re
+
+        project_dir = self._project_dir(project_id)
+        if not project_dir.exists():
+            return
+
+        # Phase 顺序定义
+        phase_order = [
+            "system_design",    # 0
+            "problem_definition",  # 1
+            "design",           # 2
+            "execution",        # 3
+            "external_validation",  # 4
+            "review",           # 5
+            "writing",          # 6
+            "clinical_tool",    # 7
+        ]
+
+        if from_phase_id not in phase_order:
+            return
+
+        from_idx = phase_order.index(from_phase_id)
+        # 作废从下一个 Phase 到当前末尾的所有审查产物
+        downstream_phases = phase_order[from_idx + 1:]
+
+        review_files = [
+            "review-clinical.md", "review-stats.md", "review-pi.md",
+            "review-approval.md", "clinical-review.md",
+        ]
+
+        for dp in downstream_phases:
+            # 标记 gate_report
+            gate_pattern = f"gate_report_phase{dp}.json" if not dp.startswith("phase") else f"gate_report_{dp}.json"
+            for f in project_dir.glob(f"gate_report_{dp}*.json"):
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    data["status"] = "superseded"
+                    data["superseded_reason"] = (
+                        f"Upstream Phase {from_phase_id} was reworked. "
+                        f"Review conclusions based on old baseline may be invalid. "
+                        f"Re-run Phase {dp} review before proceeding."
+                    )
+                    data["superseded_at"] = datetime.now().isoformat()
+                    f.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+                except Exception:
+                    pass  # 不阻塞主流程
+
+        # 标记所有下游 review-*.md 文件
+        for rf_name in review_files:
+            rf = project_dir / rf_name
+            if rf.exists():
+                try:
+                    content = rf.read_text(encoding="utf-8")
+                    if "[SUPERSEDED]" not in content:
+                        superseded_notice = (
+                            f"\n\n---\n\n**[SUPERSEDED] — Upstream Phase '{from_phase_id}' "
+                            f"was reworked on {datetime.now().strftime('%Y-%m-%d %H:%M')}. "
+                            f"The conclusions in this review may reference stale baseline data. "
+                            f"Re-run review before relying on this content.**\n"
+                        )
+                        rf.write_text(content + superseded_notice, encoding="utf-8")
+                except Exception:
+                    pass  # 不阻塞主流程
+
     def _read_change_requests(self, project_id: str) -> list[dict]:
         """读取项目的所有变更请求"""
         project_dir = self._project_dir(project_id)

@@ -122,7 +122,79 @@ os.environ["NUMEXPR_NUM_THREADS"] = "2"
 - 如果预计峰值 > 安全阈值 → 减小 n_jobs 或分批运行
 - **训练中如果风扇狂转 + 系统无响应 → 你已触发 OOM，立即强制终止进程**
 
-#### 6. 🆕 禁止嵌套并行 — cross_val 与模型 n_jobs 互斥 (2026-05-17 新增)
+#### 6. pickle/joblib 加载后覆盖 n_jobs (2026-05-12 新增)
+
+- `pickle.load` / `joblib.load` 加载的任何 sklearn/XGBoost/LightGBM 模型，**必须在加载后立即覆盖内部 `n_jobs` / `nthread` 属性**
+- 原因: pickled 模型对象保留训练时的 n_jobs 值，`cross_val_predict` clone 后的模型仍会使用该值生成线程，造成 fork CoW 内存爆炸
+
+```python
+# ✅ 正确: 加载后立即覆盖
+import pickle
+model = pickle.load(open('models/xgb_final.pkl', 'rb'))
+if hasattr(model, 'n_jobs'):
+    model.n_jobs = 1
+if hasattr(model, 'nthread'):
+    model.nthread = 1
+
+# ❌ 危险: 加载后不覆盖 → 训练时 n_jobs=8 逃逸到推理时
+model = pickle.load(open('models/xgb_final.pkl', 'rb'))
+# model.n_jobs 仍为 8 → cross_val_predict 时 8 线程爆炸
+```
+
+#### 7. cross_val_predict/cross_val_score 必须显式传 n_jobs
+
+- `cross_val_predict(model, X, y, cv=cv, n_jobs=1)` — **不可依赖默认值**
+- `cross_val_score(model, X, y, cv=cv, n_jobs=N_JOBS)` — N_JOBS 使用全局安全值
+- 原因: sklearn 不同版本 `n_jobs=None` 默认行为不一致（可能使用 joblib 全局配置），macOS 下默认可能继承父进程配置
+
+```python
+# ✅ 正确
+scores = cross_val_score(model, X, y, cv=5, n_jobs=2)
+preds = cross_val_predict(model, X, y, cv=5, n_jobs=1)
+
+# ❌ 危险: 依赖默认 n_jobs
+scores = cross_val_score(model, X, y, cv=5)
+preds = cross_val_predict(model, X, y, cv=5)
+```
+
+#### 8. 多模型串行加载时显式 gc (2026-05-12 新增)
+
+- 加载多个 pickled 模型时，每个模型处理完后立即 `del data; gc.collect()`
+- 原因: unpickled RF 模型对象内存占用可达 pickle 文件大小的 10-20 倍（树结构展开），三个模型串行加载不 gc → 内存累积到峰值
+
+```python
+# ✅ 正确
+import gc
+model1 = pickle.load(open('models/rf_model.pkl', 'rb'))
+# ... 使用 model1 ...
+del model1; gc.collect()
+
+model2 = pickle.load(open('models/xgb_model.pkl', 'rb'))
+# ... 使用 model2 ...
+del model2; gc.collect()
+```
+
+#### 9. 关键步骤前后打印内存使用 (2026-05-12 新增)
+
+- 脚本启动时、每个耗时步骤前后调用 `psutil.virtual_memory()` 输出内存使用率
+- 原因: 无监控 = 盲飞，不知道内存到底在哪个步骤爆炸
+
+```python
+import psutil
+
+def log_memory(tag: str):
+    mem = psutil.virtual_memory()
+    print(f"[MEM] {tag}: used={mem.used/(1024**3):.1f}GB, "
+          f"available={mem.available/(1024**3):.1f}GB, "
+          f"percent={mem.percent:.1f}%")
+
+# 使用
+log_memory("start")
+# ... 耗时操作 ...
+log_memory("after training")
+```
+
+#### 10. 🆕 禁止嵌套并行 — cross_val 与模型 n_jobs 互斥 (2026-05-17 新增)
 
 **教训**: 2026-05-17 renal colic 项目 Phase 3，模型内部 `n_jobs=2` + `cross_val_predict(n_jobs=2)` → 10 分钟无输出（后台 8 线程竞争 CPU）。修复为 `n_jobs=1` 后，200 棵树 RF + XGB + LGB + LR 全部完成仅 **8 秒**。
 
@@ -162,6 +234,15 @@ scores = cross_val_predict(model, X, y, cv=5, n_jobs=2)  # 2×2 + OMP threads = 
 # 内存安全配置 — 必须放在所有 import 之前
 # ============================================
 import os
+import gc
+import psutil
+
+def log_memory(tag: str):
+    """关键步骤内存监控"""
+    mem = psutil.virtual_memory()
+    print(f"[MEM] {tag}: used={mem.used/(1024**3):.1f}GB, "
+          f"available={mem.available/(1024**3):.1f}GB, "
+          f"percent={mem.percent:.1f}%")
 
 # 1. JOBLIB: forkserver 减少 fork 内存继承
 os.environ["JOBLIB_START_METHOD"] = "forkserver"
@@ -183,7 +264,49 @@ RANDOM_SEED = 42
 
 # 5. SMOTE 安全: 必须在主进程中完成，不在 worker 内调用
 #    参见规则 2 — SMOTE + 多进程是危险组合
+
+# 6. pickle/joblib 加载模型后必须覆盖 n_jobs (见规则 6)
+#    model = pickle.load(f)
+#    if hasattr(model, 'n_jobs'): model.n_jobs = 1
+
+# 7. cross_val_* 必须显式传 n_jobs (见规则 7)
+#    cross_val_score(model, X, y, cv=5, n_jobs=N_JOBS)
+
+# 8. 多模型串行加载间必须 gc.collect() (见规则 8)
+
+log_memory("script_start")
 ```
+
+#### Preflight 安全扫描 — 编排器调用机制
+
+编排器在 Phase 3/4/6 执行任何 Python 脚本前会运行 `preflight_safety_scan`。你作为 ml-engineer 必须确保脚本通过以下 6 步扫描:
+
+1. **n_jobs/nthread 审计**: 任何值 > 4 或 == -1 → FAIL; cross_val_* 未显式传 n_jobs → FAIL
+2. **pickle.load 后 n_jobs 覆盖**: 加载 sklearn/XGBoost/LightGBM 模型未覆盖 model.n_jobs=1 → FAIL; 无 gc.collect() → WARN
+3. **线程限制环境变量**: OMP/MKL/OPENBLAS/NUMEXPR/VECLIB 五项任一缺失 → FAIL
+4. **启动方式**: Unix 平台缺 JOBLIB_START_METHOD=forkserver → FAIL
+5. **跨脚本安全一致性**: 同项目 .py 脚本间 N_JOBS 值不一致 → WARN; 任一脚本缺安全样板 → FAIL
+6. **内存峰值预估**: peak > 可用 RAM × 0.7 → FAIL (需降低 n_jobs)
+
+扫描 FAIL 时编排器会拒绝执行脚本，输出修复清单给你。
+
+#### 脚本风险评级因子
+
+编排器在 Phase 0 (SDS) 会扫描项目脚本计算风险等级。你编写的代码应避免以下高权重风险因子:
+
+| 风险因子 | 权重 | 级别 |
+|----------|------|------|
+| `n_jobs=-1` 或 `n_jobs > 4` | 8 | Critical |
+| SMOTE + 并行 CV (Pipeline 内) | 8 | Critical |
+| `cross_val_predict` 未显式传 `n_jobs` | 5 | High |
+| `pickle.load` 后未覆盖 `model.n_jobs` | 5 | High |
+| `cross_val_score` 未显式传 `n_jobs` | 4 | High |
+| 缺少 OMP/MKL/OPENBLAS thread limits | 4 | High |
+| 缺少 JOBLIB_START_METHOD=forkserver | 3 | Medium |
+| ≥2 个模型串行加载无 `gc.collect()` | 3 | Medium |
+| 无内存监控日志 | 1 | Low |
+
+风险等级 ≥ High 时，SDS 必须包含降风险方案。
 
 ## 核心能力
 
@@ -506,6 +629,84 @@ artifacts:
 - 所有 sklearn Pipeline 使用 `ColumnTransformer` + `Pipeline`，不用裸 `fit_transform`
 - 特征重要性/系数作为 artifact 自动保存
 
+## 模型评估规范 — 统一输出标准
+
+### 必备评估指标集 (Phase 3 强制)
+
+所有分类模型 (主模型 + baseline + 对比模型) 必须通过 `evaluate_model()` 输出统一指标集。任一模型缺指标 → Gate 3 FAIL:
+
+| 维度 | 指标 | cv_results.json key | 说明 |
+|------|------|-------------------|------|
+| 区分度 | AUC (ROC) + 95% CI | `auc.mean`, `auc.ci_low`, `auc.ci_high` | |
+| | PR-AUC | `pr_auc` | 数据不平衡时必需 |
+| 校准度 | Brier Score | `brier` | |
+| | Calibration Slope | `calibration_slope` | 理想值 1.0 |
+| | Calibration Intercept | `calibration_intercept` | 理想值 0.0 |
+| 阈值性能 | Sensitivity | `sensitivity` | 最优阈值处 |
+| | Specificity | `specificity` | |
+| | PPV | `ppv` | |
+| | NPV | `npv` | |
+| | F1 Score | `f1` | |
+| 稳定性 | CV AUC std | `auc_cv_std` | fold 间标准差 |
+
+### cv_results.json 标准结构
+
+```json
+{
+  "models": {
+    "xgboost": {
+      "auc": {"mean": 0.842, "ci_low": 0.791, "ci_high": 0.893},
+      "pr_auc": 0.785,
+      "brier": 0.123,
+      "calibration_slope": 1.02,
+      "calibration_intercept": -0.03,
+      "sensitivity": 0.82, "specificity": 0.78,
+      "ppv": 0.76, "npv": 0.84, "f1": 0.79,
+      "auc_cv_std": 0.021
+    },
+    "logistic_regression": { /* 同上, 所有模型统一 */ }
+  },
+  "best_model": "xgboost"
+}
+```
+
+### Phase 3 基线冻结格式
+
+Gate 3 PASS 时编排器自动生成 `outputs/baselines/phase3_baseline.yaml`:
+
+```yaml
+baseline_version: v1.2
+project: "{project_name}"
+frozen_at: "{timestamp}"
+frozen_artifacts:
+  - path: models/cv_results.json
+    description: 5-fold CV results
+  - path: models/features.pkl
+    description: Final feature list
+  - path: models/xgb_final.pkl
+    description: Final model
+  - path: models/imputer.pkl
+    description: Median imputer
+safety_config:
+  n_jobs: 2
+  cross_val_predict_n_jobs: 1
+  model_n_jobs_override: true
+  thread_limits:
+    OMP_NUM_THREADS: "2"
+    OPENBLAS_NUM_THREADS: "2"
+    MKL_NUM_THREADS: "2"
+    VECLIB_MAXIMUM_THREADS: "2"
+    NUMEXPR_NUM_THREADS: "2"
+  start_method: forkserver
+  platform: darwin
+downstream_consumers:
+  - figure-designer: generate_figures.py  # reads from cv_results.json, NOT from model object
+  - sections/05_results.md
+  - tables/table2_model_performance.md
+```
+
+**关键约束**: `downstream_consumers` 中所有消费者必须从 baseline JSON 读取数据，禁止从模型对象 (`.feature_importances_`) 重新提取。
+
 ## 交互协议
 
 ### 输入
@@ -519,125 +720,17 @@ artifacts:
 - 模型评估报告 (所有指标)
 - 可解释性报告 (to `computational-biologist` + `clinical-researcher`)
 - 特征工程文档 (to 全员复用)
-- Results 部分图表 (to `scientific-writer`)
+- Figure 数据文件 (to `figure-designer` — 由独立 Agent 负责出版级图表生成)
 
-## Figure 生成规范 — 确定性数据源
+## Figure 生成
 
-**核心原则**: 凡是能从数据文件计算的东西，**禁止 LLM 推测或编造**。每个 Figure 的数字必须从指定的结构化文件中读取。
+**本 Agent 不再负责画图。** 模型训练完成后产出数据文件（cv_results.json），Figure 生成由 `shared/figure-designer` 独立负责。
 
-### 数据源对照表
+figure-designer 从以下数据文件读取数字生成出版级图表：
+- Figure 1 → `outputs/cohort_attrition.json`
+- Figures 2-4, S1 → `outputs/cv_results.json`
 
-| Figure | 内容 | 数据源文件 | 读取方式 |
-|--------|------|-----------|---------|
-| Figure 1 | 队列流程图 | `outputs/cohort_attrition.json` | `json.load()` 读取 `steps[]` 数组，每步的 `excluded`/`remaining` |
-| Figure 2 | ROC 曲线 | `models/cv_results.json` | 读取 `models.{name}.auc` 及各 fold 的 FPR/TPR |
-| Figure 3 | 校准曲线 | `models/cv_results.json` | 读取 `models.{name}.calibration_slope`/`calibration_intercept` 及各 fold 的 predicted/observed |
-| Figure 4 | 特征重要性 | `models/cv_results.json` | 读取 `models.{name}.feature_importance` |
-| Figure S1 | 决策曲线 | `models/cv_results.json` | 读取 `models.{name}.dca` 或从预测概率计算 |
-
-### Figure 1 队列流程图 — 强制规则
-
-**🚫 禁止推测筛选数字。** Figure 1 的每个筛选步骤的 N 必须从 `outputs/cohort_attrition.json` 读取。如果该文件不存在，报错退出（`raise FileNotFoundError`），不得用推测值填充。
-
-**🔧 必须使用 graphviz 绘制**，禁止使用 matplotlib 手动画流程图。graphviz 的自动布局引擎生成的流程图线条整齐、对齐专业，matplotlib 手动画流程图效果丑陋不专业。
-
-`cohort_attrition.json` 格式:
-```json
-{
-  "source": "CHARLS 2011-2018",
-  "baseline_n": 7523,
-  "steps": [
-    {"step": 1, "criterion": "Age ≥60", "excluded": 1203, "remaining": 6320},
-    {"step": 2, "criterion": "Non-frail", "excluded": 576, "remaining": 5744},
-    ...
-  ],
-  "final_n": 5432,
-  "event_n": 1428
-}
-```
-
-`generate_figures.py` 中 Figure 1 的代码模板 (graphviz):
-```python
-import json
-from graphviz import Digraph
-
-with open('outputs/cohort_attrition.json') as f:
-    cohort = json.load(f)
-
-dot = Digraph(
-    name='cohort_flow',
-    node_attr={'shape': 'box', 'style': 'rounded', 'fontname': 'Arial'},
-    edge_attr={'fontname': 'Arial', 'fontsize': '9'},
-)
-dot.attr(rankdir='TB', splines='ortho')
-
-# 基线
-dot.node('baseline', f"Baseline participants\n(n = {cohort['baseline_n']:,})")
-
-prev_node = 'baseline'
-for s in cohort['steps']:
-    step_id = f"step{s['step']}"
-    # 排除框 (右侧)
-    dot.node(f"excl{s['step']}", f"Excluded (n = {s['excluded']:,})\n{s['criterion']}",
-             shape='box', style='filled', fillcolor='#f0f0f0')
-    # 剩余框 (下方)
-    dot.node(step_id, f"n = {s['remaining']:,}")
-    
-    dot.edge(prev_node, f"excl{s['step']}", label=f"Excluded\n(n = {s['excluded']:,})")
-    dot.edge(prev_node, step_id, label=f"Remaining\n(n = {s['remaining']:,})")
-    prev_node = step_id
-
-# 最终分析人群
-dot.node('final', f"Final analysis sample\n(n = {cohort['final_n']:,})\nEvents: {cohort['event_n']:,} ({cohort.get('event_rate', 0):.1%})",
-         shape='box', style='filled', fillcolor='#e8f5e9')
-dot.edge(prev_node, 'final')
-
-dot.render('figures/Figure1_cohort-flow-diagram', format='png', dpi=300, cleanup=False)
-dot.render('figures/Figure1_cohort-flow-diagram', format='tiff', dpi=300, cleanup=False)
-```
-
-> **关键点**: graphviz 自动处理节点定位和对齐，matplotlib 流程图需要手动计算每个框的坐标，视觉效果差。Figures 2-4 (ROC/校准/特征重要性) 仍用 matplotlib/seaborn，只有流程图必须用 graphviz。
-
-### Figure data.json — 强制产出
-
-**每个 Figure 必须同时产出对应的 `_data.json` 文件**，用于 Gate 6 数值追踪。这是**强制要求**，不生成 data.json 将导致 Gate 6 FAIL。
-
-| Figure | data.json 文件 | 必须包含的 key |
-|--------|---------------|---------------|
-| Figure 1 | `Figure1_cohort-flow-diagram_data.json` | `baseline_n`, `steps[].excluded`, `steps[].remaining`, `final_n`, `event_n` |
-| Figure 2 | `Figure2_roc-curve_data.json` | `auc`, `auc_ci_low`, `auc_ci_high` — 值与 cv_results.json 一致 |
-| Figure 3 | `Figure3_calibration-plot_data.json` | `brier`, `calibration_slope`, `calibration_intercept` — 值与 cv_results.json 一致 |
-| Figure 4 | `Figure4_feature-importance_data.json` | `feature_importance` — 值与 cv_results.json 一致 |
-
-data.json 的值必须从 cv_results.json 或 cohort_attrition.json **直接读取后写入**，不是从模型对象（`.feature_importances_`）重新提取。
-
-### Figure caption — 必须独立为 .md 文件
-
-**图中禁止出现文字注释描述。** 所有统计量、数值、图例说明必须写入独立的 `Figure[N]_caption.md` 文件，不在图中标注。具体规则:
-
-- ROC 曲线: 图内仅保留图例 (AUC 值可放图例)，完整 caption 写入 `Figure2_roc-curve_caption.md`
-- 校准曲线: 图内无文字注释，caption 写入 `Figure3_calibration-plot_caption.md`
-- SHAP 特征重要性: **禁止在条形末端标注数值** (禁止 `ax.text()`)，完整特征名和 SHAP 值写入 `Figure4_feature-importance_caption.md`
-- 每个 caption.md 文件必须与对应 .png 文件同目录、同前缀命名
-
-### Figure 美学规范 — 强制约束
-
-**所有 matplotlib/seaborn 生成的 Figure (Figure 2-4) 必须遵循以下规范，确保出版级质量：**
-
-1. **Seaborn 样式必须启用**: 每个绘图函数开头调用 `sns.set_style("whitegrid")` + `sns.set_context("paper", font_scale=1.1)`，禁止使用 matplotlib 裸默认样式
-2. **图例必须放在图内右下角**: `ax.legend(loc='lower right', frameon=True, framealpha=0.9, edgecolor='#dddddd')`，禁止使用默认 `legend()` 无参数调用。图例不得与数据线/数据点重叠，必要时用 `borderpad=0.8` 增加内边距
-3. **统一尺寸和分辨率**: `figsize=(7, 5.5)`, `dpi=300`, 保存时 `bbox_inches='tight'`
-4. **统一配色方案**: 主曲线颜色 `#2166ac`，参考线 `k--` + `alpha=0.6`，特征重要性用 `sns.color_palette("Blues_d")` 渐变
-5. **坐标轴美学**:
-   - 轴标签 `fontsize=11`，刻度 `fontsize=10`
-   - Spine 统一浅灰: `spine.set_edgecolor('#cccccc'); spine.set_linewidth(0.5)`
-   - ROC/校准图的 x/y 轴范围统一 `[-0.02, 1.02]`，留白避免线条贴边
-6. **数据点样式 (校准曲线)**: `markersize=7, markerfacecolor='white', markeredgewidth=1.5, markeredgecolor='#2166ac'`，确保空心圆不与图例框重叠
-7. **禁止的写法**:
-   - `ax.plot(..., 'b-')` — 禁止用单字符颜色码，必须用 hex 色值
-   - `ax.legend()` — 无参数调用
-   - `plt.savefig(..., dpi=100)` — 低分辨率
-   - 硬编码中文字体 — 论文图统一英文标签
+详细规范见 `company/shared-services/figure-designer-agent.md`。
 
 ### Phase 3 cohort_attrition.json 产出
 

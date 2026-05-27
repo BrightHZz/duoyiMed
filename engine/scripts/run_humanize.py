@@ -346,6 +346,15 @@ def run_humanize(project_dir: Path) -> dict:
 
 
 def main():
+    _fp = Path(__file__).resolve()
+    if _fp.parent.parent.name != "engine":
+        import warnings
+        warnings.warn(
+            f"此脚本的项目本地副本已过时。请删除并使用引擎版本: "
+            f"python engine/scripts/{_fp.name} --project-dir .",
+            DeprecationWarning, stacklevel=2
+        )
+
     parser = argparse.ArgumentParser(
         description="Phase 6 Humanize Check — Python regex layer (de-AI scan)"
     )

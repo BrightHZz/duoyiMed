@@ -389,6 +389,92 @@ class RunAnalyzer:
 # CLI 入口
 # ================================================================
 
+    def generate_full_report(self, kb_manager=None) -> str:
+        """生成完整季度报告 (--full), 含相似项目、瓶颈热力图、经验规则汇总。
+
+        相比 generate_report(), 额外包含:
+        - 相似项目矩阵
+        - 系统瓶颈热力图
+        - Agent 性能趋势
+        - 经验规则汇总
+        - 改进建议优先级排序
+        """
+        base_report = self.generate_report()
+        if not self.records:
+            return base_report
+
+        extra_lines = []
+
+        # 瓶颈识别
+        if kb_manager:
+            try:
+                bottlenecks = kb_manager.extract_bottlenecks()
+                if bottlenecks:
+                    extra_lines += [
+                        "", "## 系统瓶颈热力图", "",
+                        "| 类型 | 目标 | 当前值 | 建议 |",
+                        "|------|------|--------|------|",
+                    ]
+                    for b in bottlenecks:
+                        btype = {"phase_slow": "🐌 Phase耗时", "gate_fail": "❌ Gate失败",
+                                 "agent_low": "📉 Agent成功率"}.get(b["type"], b["type"])
+                        extra_lines.append(
+                            f"| {btype} | {b['target']} | {b['value']} | {b['suggestion']} |"
+                        )
+            except Exception:
+                pass
+
+            # 相似项目 (基于当前最活跃的 division)
+            try:
+                # 从已有数据推断最活跃事业部
+                div_counts = {}
+                for r in self.records:
+                    div = r.get("division", "")
+                    if div:
+                        div_counts[div] = div_counts.get(div, 0) + 1
+                dominant_div = max(div_counts, key=div_counts.get) if div_counts else None
+
+                if dominant_div:
+                    similar = kb_manager.find_similar_projects(division=dominant_div)
+                    if similar:
+                        extra_lines += [
+                            "", "## 相似项目矩阵", "",
+                            f"*与 {dominant_div} 事业部最相似的历史项目:*",
+                            "",
+                            "| 项目 ID | 事业部 | 相似度 | 状态 | 研究主题 |",
+                            "|---------|--------|--------|------|----------|",
+                        ]
+                        for s in similar:
+                            extra_lines.append(
+                                f"| {s['id']} | {s['division']} | {s['score']} | "
+                                f"{s['status'][:12]} | {s['request'][:80]} |"
+                            )
+            except Exception:
+                pass
+
+        # 经验规则汇总
+        if kb_manager:
+            try:
+                rules = kb_manager.scan_lessons_learned()
+                if rules:
+                    extra_lines += [
+                        "", "## 经验规则汇总", "",
+                        f"*共 {len(rules)} 条跨项目经验规则:*",
+                        "",
+                        "| 规则 ID | 严重级别 | 来源项目 | 修复建议 |",
+                        "|---------|---------|----------|----------|",
+                    ]
+                    for r in sorted(rules, key=lambda x: x.get("severity", "")):
+                        extra_lines.append(
+                            f"| {r.get('rule_id', '?')} | {r.get('severity', '?')} | "
+                            f"{r.get('source_project', '?')} | {r.get('fix', '')[:60]} |"
+                        )
+            except Exception:
+                pass
+
+        return base_report + "\n".join(extra_lines)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -397,6 +483,8 @@ if __name__ == "__main__":
     parser.add_argument("--days", type=int, default=0, help="分析天数 (0=全部)")
     parser.add_argument("--output", "-o", default=None, help="输出文件 (默认 stdout)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 格式")
+    parser.add_argument("--full", action="store_true", help="完整报告 (含瓶颈/相似项目/经验规则)")
+    parser.add_argument("--vault", default=None, help="知识库 Obsidian vault 路径 (--full 时需要)")
     args = parser.parse_args()
 
     analyzer = RunAnalyzer(log_dir=args.log_dir)
@@ -406,6 +494,21 @@ if __name__ == "__main__":
         print("无运行数据。")
     elif args.json:
         print(json.dumps(analyzer.generate_json_summary(), ensure_ascii=False, indent=2))
+    elif args.full:
+        kb = None
+        if args.vault:
+            from pathlib import Path as _Path
+            from engine.core.kb_manager import KnowledgeBaseManager
+            kb = KnowledgeBaseManager(
+                vault_path=_Path(args.vault),
+                outputs_dir=_Path(args.log_dir) if args.log_dir else None,
+            )
+        report = analyzer.generate_full_report(kb_manager=kb)
+        if args.output:
+            Path(args.output).write_text(report)
+            print(f"Full report saved to {args.output}")
+        else:
+            print(report)
     else:
         report = analyzer.generate_report()
         if args.output:
