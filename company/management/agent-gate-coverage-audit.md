@@ -52,7 +52,11 @@
 | 15 | Conclusion ## 独立章节 | scientific-writer | `check_conclusion_heading_level` | writing |
 | 16 | DOI 验证 (fake=0) | scientific-writer | `check_doi_verification` | writing |
 | 17 | 参考文献 ≥ 25 篇 | scientific-writer | `check_ref_count` | writing |
-| 18 | 参考文献时效性 ≥ 80% | scientific-writer | `check_ref_recency` | writing |
+| 18 | 参考文献时效性 近5年≥80% + 近10年≥95% (双重门槛) | scientific-writer | `check_ref_recency` | writing |
+| 18a | 参考文献已发表状态 | scientific-writer | `check_ref_publication_status` 🆕 | writing |
+| 18b | 参考文献禁止教科书 | scientific-writer | `check_no_textbook_citations` 🆕 | writing |
+| 18c | 综述禁止引用综述 | scientific-writer | `check_no_review_citing_review` 🆕 | writing |
+| 18d | 经典文献占比 ≤5% | scientific-writer | `check_classic_ratio` 🆕 | writing |
 | 19 | Discussion 四段落 | scientific-writer | `check_discussion_four_paragraphs` | writing |
 | 20 | Discussion ¶4 无结论收束句 | scientific-writer | `check_discussion_p4_no_conclusion` | writing |
 | 21 | AI 写作模式检查 (18 项禁用词) | scientific-writer | `check_humanize_quality` 🆕 | writing |
@@ -128,7 +132,7 @@
 |---|------|--------|--------|
 | C1 | **参考文献门槛**: agent 写 "论著 ≥35 篇"，gate 检查 ≥25 | `scientific-writer-agent.md:713` | `gate_checks.py:158` |
 | C2 | **参考文献门槛**: agent Quality Checklist 写 "论著 ≥25 篇" vs 前面写 "≥35 篇" | `scientific-writer-agent.md:677` | `scientific-writer-agent.md:713` |
-| C3 | **参考文献时效性**: research-assistant (agents/) 要求 ≥80%，shared/ 版本缺失此约束 | `agents/research-assistant-agent.md` | `company/shared-services/research-assistant-agent.md` |
+| C3 | **参考文献时效性**: 已修复 (2026-05-27) — 全部 Agent prompt 统一为近5年≥80% + 近10年≥95% 双重门槛，与 `check_ref_recency` 对齐 | — | — |
 
 ## 七、解决方案
 

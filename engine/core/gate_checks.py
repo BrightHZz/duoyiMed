@@ -768,16 +768,39 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
 
 
 def check_ref_count(outputs: dict, orch) -> tuple:
-    """参考文献数量达标 (论著 ≥ 25)"""
+    """参考文献数量达标 — 论著 ≥ 25, 综述 ≥ 45
+
+    项目类型检测: 从 scientific-writer 输出中检测 Review/综述标记,
+    或从 orch 获取 user_intent。默认按论著 ≥ 25 处理。
+    """
+    # Detect project type
+    is_review = False
+    if orch and hasattr(orch, 'state') and hasattr(orch.state, 'user_intent'):
+        intent = getattr(orch.state, 'user_intent', '')
+        if intent in ('literature_review',):
+            is_review = True
+
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower():
-            # 计数 [1] [2] 格式引用 + DOI 格式引用
+            # Fallback: detect review from title/abstract keywords
+            title_match = re.search(
+                r'(?:Review|综述|Systematic Review|Narrative Review|Meta.Analysis|Scoping Review)',
+                output[:2000], re.IGNORECASE
+            )
+            if title_match and not is_review:
+                is_review = True
+
+            # Count references
             refs = set(re.findall(r'\[\d+\]', output))
             dois = re.findall(r'10\.\d{4,}/[^\s"\']+', output)
             count = max(len(refs), len(dois))
-            if count >= 25:
-                return True, f"参考文献 {count} 篇 ≥ 25 篇门槛"
-            return False, f"参考文献仅 {count} 篇, 需 ≥ 25 篇"
+
+            threshold = 45 if is_review else 25
+            label = "综述" if is_review else "论著"
+
+            if count >= threshold:
+                return True, f"参考文献 {count} 篇 ≥ {threshold} 篇门槛 ({label})"
+            return False, f"参考文献仅 {count} 篇, {label}需 ≥ {threshold} 篇"
     return True, "跳过 (无 scientific-writer 输出)"
 
 
@@ -856,17 +879,24 @@ def _extract_ref_entries_with_context(ref_text: str, current_year: int) -> list[
 
 
 def check_ref_recency(outputs: dict, orch) -> tuple:
-    """参考文献时效性 — ≥80% 近5年, 经典方法学论文自动豁免
+    """参考文献时效性 — 双重门槛: ≥80% 近5年 + ≥95% 近10年, 经典方法学论文自动豁免
 
     豁免规则:
     1. 在 classic-papers.md 注册表中的论文 → 自动豁免, 不计入时效分母
     2. 标注了 [Classic — reason] 的论文 → 豁免
-    3. 不在注册表且无标注的 >5 年文献 → 计入分母, 可能拉低时效比
+    3. 不在注册表且无标注的旧文献 → 计入分母, 可能拉低时效比
+
+    双重门槛 (v2):
+    - 近 5 年 (current_year-4 ~ current_year): ≥80%
+    - 近 10 年 (current_year-9 ~ current_year): ≥95%
+    - 任一阈值不满足 → FAIL
     """
     import datetime
     current_year = datetime.datetime.now().year
-    recency_window = 5
-    cutoff_year = current_year - recency_window
+    recency_window_5 = 5
+    recency_window_10 = 10
+    cutoff_year_5 = current_year - recency_window_5
+    cutoff_year_10 = current_year - recency_window_10
 
     # Load classic registry
     classic_registry = _load_classic_papers_registry()
@@ -888,8 +918,10 @@ def check_ref_recency(outputs: dict, orch) -> tuple:
 
             # Classify each entry
             exempted_count = 0
-            recent_count = 0
+            recent_5_count = 0
+            recent_10_count = 0  # includes recent_5
             old_unexplained = []
+            very_old_unexplained = []  # >10 years, no exemption
             total = len(entries)
 
             for entry in entries:
@@ -902,48 +934,74 @@ def check_ref_recency(outputs: dict, orch) -> tuple:
                     is_classic_registry = (entry["first_author"], year) in classic_registry
 
                 is_classic_annotated = entry["has_classic_tag"]
-                # 🆕 检测占位符 "领域" 被当作实际领域名使用
+                # 检测占位符 "领域" 被当作实际领域名使用
                 if is_classic_annotated and entry.get("classic_reason", "").startswith("领域"):
                     old_unexplained.append(entry)
+                    if year < cutoff_year_10:
+                        very_old_unexplained.append(entry)
                     continue  # 格式无效, 不计入豁免
 
                 if is_classic_registry or is_classic_annotated:
                     exempted_count += 1
-                elif year >= cutoff_year:
-                    recent_count += 1
+                elif year >= cutoff_year_5:
+                    recent_5_count += 1
+                    recent_10_count += 1
+                elif year >= cutoff_year_10:
+                    recent_10_count += 1
                 else:
                     old_unexplained.append(entry)
+                    if year < cutoff_year_10:
+                        very_old_unexplained.append(entry)
 
-            # Compute recency ratio: recent / (total - exempted)
+            # Compute recency ratios
             denominator = total - exempted_count
             if denominator == 0:
-                return True, f"所有 {total} 篇参考文献均为经典文献 (全部豁免) ✓"
+                return True, f"所有 {total} 篇参考文献均为经典文献 (全部豁免)"
 
-            recency_ratio = recent_count / denominator
+            recency_5_ratio = recent_5_count / denominator
+            recency_10_ratio = recent_10_count / denominator
 
-            if recency_ratio >= 0.80:
-                result = (
-                    f"参考文献时效性达标: {recent_count}/{denominator} "
-                    f"({recency_ratio:.0%}) 为近{recency_window}年 "
-                    f"(豁免 {exempted_count} 篇经典文献)"
+            errors = []
+
+            # Check 5-year threshold
+            if recency_5_ratio < 0.80:
+                errors.append(
+                    f"近5年时效性不足: {recent_5_count}/{denominator} "
+                    f"({recency_5_ratio:.0%}), 需 ≥80%"
                 )
-                if old_unexplained:
-                    old_list = ", ".join(
-                        f"{e['first_author']}({e['year']})" for e in old_unexplained[:5]
-                    )
-                    result += f". ⚠️ {len(old_unexplained)} 篇旧文献缺少豁免标注: {old_list}"
-                return True, result
 
-            old_list = ", ".join(
-                f"{e['first_author']}({e['year']})" for e in old_unexplained[:5]
+            # Check 10-year threshold
+            if recency_10_ratio < 0.95:
+                errors.append(
+                    f"近10年时效性不足: {recent_10_count}/{denominator} "
+                    f"({recency_10_ratio:.0%}), 需 ≥95%"
+                )
+
+            if errors:
+                old_list_5 = ", ".join(
+                    f"{e['first_author']}({e['year']})" for e in old_unexplained[:8]
+                )
+                error_msg = (
+                    "; ".join(errors)
+                    + f". 豁免 {exempted_count} 篇经典文献"
+                    + f". 超限旧文献: {old_list_5}"
+                    + ". 请添加 [Classic — reason] 标注 或 替换为近期文献"
+                )
+                return False, error_msg
+
+            # Both thresholds pass
+            result = (
+                f"参考文献时效性达标 (双重门槛): "
+                f"近5年 {recent_5_count}/{denominator} ({recency_5_ratio:.0%}) ≥80%, "
+                f"近10年 {recent_10_count}/{denominator} ({recency_10_ratio:.0%}) ≥95% "
+                f"(豁免 {exempted_count} 篇经典文献)"
             )
-            return False, (
-                f"参考文献时效性不足: 仅 {recent_count}/{denominator} "
-                f"({recency_ratio:.0%}) 为近{recency_window}年, 需 ≥80%. "
-                f"豁免 {exempted_count} 篇经典文献. "
-                f"{len(old_unexplained)} 篇旧文献缺少豁免标注: {old_list}. "
-                f"请添加 [Classic — reason] 标注 或 替换为近5年文献"
-            )
+            if old_unexplained:
+                old_list = ", ".join(
+                    f"{e['first_author']}({e['year']})" for e in old_unexplained[:5]
+                )
+                result += f". {len(old_unexplained)} 篇旧文献缺少豁免标注: {old_list}"
+            return True, result
     return True, "跳过 (无 scientific-writer 输出)"
 
 
@@ -1329,6 +1387,240 @@ def check_reference_spot_audit(outputs: dict, orch) -> tuple:
         f"Spot audit PASS: 抽检 {sample_n}/{total} 条, "
         f"全部有 verified_date + pmid/doi, 审计痕迹完整 ✓"
     )
+
+
+def check_ref_publication_status(outputs: dict, orch) -> tuple:
+    """参考文献已发表状态检查 — 禁止引用预印本/会议摘要/白皮书/临床试验注册页/个人通信
+
+    对齐 reference-quality-standard.md 规则一。
+    """
+    forbidden_patterns = [
+        (r'(?i)presented\s+at\b', "会议报告/摘要 (Presented at...)"),
+        (r'(?i)conference\s+(abstract|proceeding|paper)', "会议摘要/论文集"),
+        (r'(?i)\bmedrxiv\b', "预印本 (medRxiv)"),
+        (r'(?i)\bbiorxiv\b', "预印本 (bioRxiv)"),
+        (r'(?i)\bpreprint\b', "预印本"),
+        (r'(?i)white\s*paper', "白皮书"),
+        (r'(?i)\bclinicaltrials\.gov\b', "临床试验注册页面"),
+        (r'(?i)personal\s+communication', "个人通信"),
+        (r'(?i)unpublished\s+(data|results|observations)', "未发表数据"),
+        (r'(?i)\bKFF\s+Poll\b', "民调/新闻稿"),
+    ]
+
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower():
+            # Only check the References section
+            ref_section_match = re.search(
+                r'(?:##\s*References?|##\s*参考文献).*',
+                output, re.IGNORECASE | re.DOTALL
+            )
+            search_text = ref_section_match.group(0) if ref_section_match else output
+
+            violations = []
+            for pattern, label in forbidden_patterns:
+                matches = re.findall(pattern, search_text)
+                if matches:
+                    violations.append(f"{label} ({len(matches)} 处)")
+
+            if violations:
+                return False, (
+                    f"参考文献包含未发表/非同行评议来源: {'; '.join(violations)}. "
+                    f"请替换为已发表的同行评议文献"
+                )
+            return True, "参考文献已发表状态检查通过 (无预印本/会议摘要/白皮书)"
+    return True, "跳过 (无 scientific-writer 输出)"
+
+
+def check_no_textbook_citations(outputs: dict, orch) -> tuple:
+    """参考文献禁止教科书检查 — 不引用教科书/教材/手册
+
+    对齐 reference-quality-standard.md 规则四。
+    临床指南 (EAU, AWGS, ESPEN等) 属于权威机构正式发表, 不在此列。
+    """
+    textbook_patterns = [
+        (r'(?i)textbook\s+of\b', "教科书 (Textbook of...)"),
+        (r'(?i)handbook\s+of\b', "手册 (Handbook of...)"),
+        (r'(?i)\bmanuals?\s+of\b', "手册 (Manual of...)"),
+        (r'(?i)[教材教科书]', "教材/教科书 (中文)"),
+    ]
+
+    # Allow-list: clinical guidelines that look like textbooks but aren't
+    guideline_allowlist = re.compile(
+        r'(?i)EAU|AUA|NCCN|ESPEN|AWGS|EWGSOP|WHO|NICE|ADA|ASCO|ESMO',
+    )
+
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower():
+            ref_section_match = re.search(
+                r'(?:##\s*References?|##\s*参考文献).*',
+                output, re.IGNORECASE | re.DOTALL
+            )
+            search_text = ref_section_match.group(0) if ref_section_match else output
+
+            violations = []
+            for pattern, label in textbook_patterns:
+                # Find matches but exclude those on the guideline allow-list
+                for m in re.finditer(pattern, search_text):
+                    # Check if this line also contains a guideline keyword
+                    line_start = max(0, m.start() - 200)
+                    line_end = min(len(search_text), m.end() + 200)
+                    context = search_text[line_start:line_end]
+                    if not guideline_allowlist.search(context):
+                        violations.append(label)
+
+            if violations:
+                return False, (
+                    f"参考文献包含教科书/教材引用: {'; '.join(set(violations))}. "
+                    f"请追溯至一次研究文献或权威综述。临床指南 (EAU/NCCN等) 不在此限。"
+                )
+            return True, "参考文献教科书检查通过 (无教科书引用)"
+    return True, "跳过 (无 scientific-writer 输出)"
+
+
+def check_no_review_citing_review(outputs: dict, orch) -> tuple:
+    """综述禁止引用综述作为论据 — 对齐 reference-quality-standard.md 规则二
+
+    仅对综述项目 (review/literature_review) 执行。
+    扫描 References 中的综述/系统综述/Meta分析标记, 排除 gap identification 场景。
+    超过 3 篇疑似以综述作为论据 → FAIL。
+    """
+    # Detect review project type
+    is_review = False
+    if orch and hasattr(orch, 'state') and hasattr(orch.state, 'user_intent'):
+        intent = getattr(orch.state, 'user_intent', '')
+        if intent == 'literature_review':
+            is_review = True
+
+    # Fallback: detect from output
+    review_type_markers = [
+        r'(?i)(?:Narrative\s+Review|Systematic\s+Review|Scoping\s+Review|文献综述|综述)',
+    ]
+
+    review_keywords_in_refs = [
+        r'(?i)systematic\s+review',
+        r'(?i)meta[\-\s]analysis',
+        r'(?i)narrative\s+review',
+        r'(?i)scoping\s+review',
+        r'(?i)Nat\s+Rev\s+\w+',  # Nature Reviews journals
+    ]
+
+    # Allow-list: usage as background/gap identification
+    gap_context_markers = [
+        r'(?i)(?:as\s+reviewed\s+by|已有综述|identified\s+gaps?\s+in|bibliographic\s+resource|'
+        r'prior\s+review|previous\s+review|recent\s+review\s+identified)',
+    ]
+
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower():
+            # Check if this is a review project
+            if not is_review:
+                for marker in review_type_markers:
+                    if re.search(marker, output[:3000], re.IGNORECASE):
+                        is_review = True
+                        break
+
+            if not is_review:
+                return True, "跳过 (非综述项目)"
+
+            # Extract References section
+            ref_section_match = re.search(
+                r'(?:##\s*References?|##\s*参考文献).*',
+                output, re.IGNORECASE | re.DOTALL
+            )
+            search_text = ref_section_match.group(0) if ref_section_match else output
+
+            # Find review-type references
+            suspected_reviews = []
+            for line in search_text.split('\n'):
+                for kw_pattern in review_keywords_in_refs:
+                    if re.search(kw_pattern, line):
+                        # Check if it's used as gap context
+                        is_gap_context = any(
+                            re.search(gap, line) for gap in gap_context_markers
+                        )
+                        if not is_gap_context:
+                            suspected_reviews.append(line.strip()[:80])
+                        break
+
+            if len(suspected_reviews) > 3:
+                return False, (
+                    f"综述禁止引用综述: {len(suspected_reviews)} 篇疑似以综述作为论据. "
+                    f"请将综述引用替换为一次文献, 或标注为 gap identification 背景引用. "
+                    f"疑似条目: {'; '.join(suspected_reviews[:5])}"
+                )
+            elif len(suspected_reviews) > 0:
+                return True, (
+                    f"综述引用检查: {len(suspected_reviews)} 篇疑似综述引用 (≤3 篇容忍). "
+                    f"通过但建议复查: {'; '.join(suspected_reviews[:3])}"
+                )
+            return True, "综述禁止引用综述检查通过 (无违规)"
+    return True, "跳过 (无 scientific-writer 输出)"
+
+
+def check_classic_ratio(outputs: dict, orch) -> tuple:
+    """经典文献占比上限 — 豁免时效的经典论文 ≤ 总参考文献的 5%
+
+    对齐 reference-quality-standard.md 规则二「经典论文占比上限」。
+    超过上限 → FAIL: 多余经典论文不再豁免, 计入时效分母后重新检查 recency。
+    防止过度依赖经典豁免绕过时效性双重门槛。
+    """
+    import datetime
+    current_year = datetime.datetime.now().year
+    max_classic_ratio = 0.05
+
+    # Load classic registry
+    classic_registry = _load_classic_papers_registry()
+
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower():
+            ref_section_match = re.search(
+                r'(?:##\s*References?|##\s*参考文献).*',
+                output, re.IGNORECASE | re.DOTALL
+            )
+            search_text = ref_section_match.group(0) if ref_section_match else output
+
+            entries = _extract_ref_entries_with_context(search_text, current_year)
+            total = len(entries)
+            if total == 0:
+                return True, "跳过 (未检测到参考文献条目)"
+
+            # Count classics
+            classic_count = 0
+            classic_details = []
+            for entry in entries:
+                year = entry.get("year")
+                is_classic_registry = False
+                if entry["first_author"] and year:
+                    is_classic_registry = (entry["first_author"], year) in classic_registry
+
+                is_classic_annotated = entry["has_classic_tag"]
+                if is_classic_annotated and entry.get("classic_reason", "").startswith("领域"):
+                    continue  # invalid placeholder, not a real classic
+
+                if is_classic_registry or is_classic_annotated:
+                    classic_count += 1
+                    classic_details.append(
+                        f"{entry['first_author']}({year})"
+                    )
+
+            classic_ratio = classic_count / total
+            max_allowed = int(total * max_classic_ratio)
+
+            if classic_ratio > max_classic_ratio:
+                return False, (
+                    f"经典文献占比超标: {classic_count}/{total} "
+                    f"({classic_ratio:.1%}) > {max_classic_ratio:.0%} 上限. "
+                    f"最多允许 {max_allowed} 篇经典豁免. "
+                    f"超标经典文献: {', '.join(classic_details)}. "
+                    f"请: (1)将非必要经典文献替换为近期文献; "
+                    f"(2)或精简参考文献列表中的旧文献"
+                )
+
+            return True, (
+                f"经典文献占比达标: {classic_count}/{total} "
+                f"({classic_ratio:.1%}) ≤ {max_classic_ratio:.0%} ✓"
+            )
+    return True, "跳过 (无 scientific-writer 输出)"
 
 
 def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
@@ -5201,6 +5493,10 @@ GATE_DEFINITIONS = {
             "reference_claim_mapping": check_reference_claim_mapping,              # 2026-05-26: OEMC-R12 参考文献-声明可追溯
             "reference_source_tier": check_reference_source_tier,                  # 2026-05-26: OEMC-R13 来源层级 L3阻断
             "reference_spot_audit": check_reference_spot_audit,                    # 2026-05-26: OEMC-R13 随机抽检
+            "ref_publication_status": check_ref_publication_status,               # 2026-05-27: 已发表状态检查 (规则一)
+            "no_textbook_citations": check_no_textbook_citations,                 # 2026-05-27: 禁止教科书检查 (规则四)
+            "no_review_citing_review": check_no_review_citing_review,             # 2026-05-27: 综述禁止引用综述 (规则二)
+            "classic_ratio": check_classic_ratio,                                 # 2026-05-27: 经典文献占比 ≤5% (规则二)
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",

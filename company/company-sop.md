@@ -219,8 +219,8 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 16 | 软件+版本号 | auto | Methods 含软件名称及版本 |
 | 17 | Conclusion 独立章节 | auto | `## Conclusion` 存在，非 `### Conclusion` |
 | 18 | DOI 验证通过 | auto | fake DOI = 0 |
-| 19 | 参考文献数量达标 | auto | ≥ 25 篇 (论著) / ≥ 45 篇 (综述) |
-| 20 | 参考文献时效性 | auto | ≥80% 为近 5 年文献 |
+| 19 | 参考文献数量达标 | auto | `check_ref_count`: 自动识别项目类型, 论著≥25 / 综述≥45 |
+| 20 | 参考文献时效性 | auto | `check_ref_recency`: 近5年≥80% + 近10年≥95% (双重门槛) |
 | 21 | Discussion 四段完整 | auto | ¶1-¶4 空行分隔，¶4 无结论性收束句 |
 | 22 | Methods↔Results 1:1 | llm | PI 确认无遗漏 |
 | 23 | 数值可追溯 | llm | 所有数字标注来源 Agent |
@@ -230,6 +230,10 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 27 | 参考文献-声明映射 | auto | `check_reference_claim_mapping`: 每篇文献在 reference-claim-mapping.md 中有正文声明，无孤儿引用 |
 | 28 | 参考文献来源层级 | auto | `check_reference_source_tier`: L3 → FAIL, L2 >30% → COND_PASS |
 | 29 | 参考文献抽检 | auto | `check_reference_spot_audit`: N=max(3,15%×refs) 审计痕迹核查 |
+| 30 | 参考文献已发表状态 | auto | `check_ref_publication_status`: 禁止预印本/会议摘要/白皮书/临床试验注册页 |
+| 31 | 参考文献禁止教科书 | auto | `check_no_textbook_citations`: 禁止教科书/教材/手册 (临床指南除外) |
+| 32 | 综述禁止引用综述 | auto | `check_no_review_citing_review`: 综述引用其他综述作为论据 >3篇 → FAIL |
+| 33 | 经典文献占比上限 | auto | `check_classic_ratio`: 豁免时效的经典论文 ≤ 总参考文献 5% |
 
 #### Gate 7 — 临床工具部署
 
@@ -342,7 +346,7 @@ project_source: glp1-sarcopenia-weight-cycling-review
 - 所有统计声明须经 biostatistician 审查
 - 所有临床声明须经对应事业部 clinical-researcher 审查
 - 所有参考文献 DOI 须验证
-- **参考文献优先近 5 年文献, ≥80% 须为近 5 年内发表** (经典方法学文献不在此限)
+- **参考文献时效性双重门槛: 近5年 ≥80% + 近10年 ≥95%** (经典方法学文献不在此限, 需在 classic-papers.md 注册豁免)
 
 ### 6.3 Methods 因果方向原则
 
