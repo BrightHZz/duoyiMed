@@ -1557,6 +1557,49 @@ def check_no_review_citing_review(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 scientific-writer 输出)"
 
 
+def check_citation_stacking(outputs: dict, orch) -> tuple:
+    """引用堆砌检测 — 同一括号内 ≥3 个引用 → WARN
+
+    对齐 reference-quality-standard.md 规则三「单句引用上限」。
+    一个事实最多引用 2 篇。≥3 篇说明声明太宽泛或为堆砌。
+    不 FAIL（允许少数合理场景），但 >3 处违规 → WARN 并建议修正。
+    """
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower():
+            body = output.split('## References')[0] if '## References' in output else output
+
+            # Find all [N,M,O] or [N,M] citation groups with 3+
+            stacking_instances = []
+            for m in re.finditer(r'\[(\d+(?:,\s*\d+){2,})\]', body):
+                refs = [int(x.strip()) for x in m.group(1).split(',')]
+                if len(refs) >= 3:
+                    # Extract surrounding sentence for context
+                    start = max(0, m.start() - 80)
+                    end = min(len(body), m.end() + 80)
+                    context = body[start:end].replace('\n', ' ').strip()
+                    stacking_instances.append((len(refs), context[:120]))
+
+            if len(stacking_instances) > 3:
+                examples = '; '.join(
+                    f'[{n} refs] ...{c}...' for n, c in stacking_instances[:4]
+                )
+                return False, (
+                    f"引用堆砌: {len(stacking_instances)} 处同一括号内 ≥3 个引用. "
+                    f"一个事实最多引用 2 篇, 多余引用请拆分为子声明或精简. "
+                    f"实例: {examples}"
+                )
+            elif len(stacking_instances) > 0:
+                examples = '; '.join(
+                    f'[{n} refs] ...{c[:80]}...' for n, c in stacking_instances[:2]
+                )
+                return True, (
+                    f"引用堆砌提示: {len(stacking_instances)} 处 ≥3 引用 (≤3 处容忍). "
+                    f"建议复查: {examples}"
+                )
+            return True, "引用堆砌检查通过 (无 ≥3 引用括号)"
+    return True, "跳过 (无 scientific-writer 输出)"
+
+
 def check_classic_ratio(outputs: dict, orch) -> tuple:
     """经典文献占比上限 — 豁免时效的经典论文 ≤ 总参考文献的 5%
 
@@ -5746,6 +5789,7 @@ GATE_DEFINITIONS = {
             "ref_publication_status": check_ref_publication_status,               # 2026-05-27: 已发表状态检查 (规则一)
             "no_textbook_citations": check_no_textbook_citations,                 # 2026-05-27: 禁止教科书检查 (规则四)
             "no_review_citing_review": check_no_review_citing_review,             # 2026-05-27: 综述禁止引用综述 (规则二)
+            "citation_stacking": check_citation_stacking,                         # 2026-05-27: 引用堆砌检测 (规则三)
             "classic_ratio": check_classic_ratio,                                 # 2026-05-27: 经典文献占比 ≤5% (规则二)
         },
         "llm_checks": [

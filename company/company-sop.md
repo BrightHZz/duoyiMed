@@ -233,7 +233,8 @@ Phase 7 由临床工具开发工程师执行，将训练好的预测模型转化
 | 30 | 参考文献已发表状态 | auto | `check_ref_publication_status`: 禁止预印本/会议摘要/白皮书/临床试验注册页 |
 | 31 | 参考文献禁止教科书 | auto | `check_no_textbook_citations`: 禁止教科书/教材/手册 (临床指南除外) |
 | 32 | 综述禁止引用综述 | auto | `check_no_review_citing_review`: 综述引用其他综述作为论据 >3篇 → FAIL |
-| 33 | 经典文献占比上限 | auto | `check_classic_ratio`: 豁免时效的经典论文 ≤ 总参考文献 5% |
+| 33 | 引用堆砌检测 | auto | `check_citation_stacking`: 同一括号内 ≥3 引用 >3处 → FAIL, ≤3处 → WARN |
+| 34 | 经典文献占比上限 | auto | `check_classic_ratio`: 豁免时效的经典论文 ≤ 总参考文献 5% |
 
 #### Gate 7 — 临床工具部署
 
