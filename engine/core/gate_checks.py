@@ -701,7 +701,11 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
         crossref_ok = False
 
     if not crossref_ok:
-        return True, f"CrossRef API 不可达 ({len(refs)} DOI 待验证, 仅依赖 check_doi_verification)"
+        return True, (
+            f"COND_PASS: CrossRef API 不可达 ({len(refs)} DOI 待验证) — "
+            f"无法进行 DOI→标题 内容级验证, 仅依赖 check_doi_verification 的结构检查。"
+            f"条件注入下游: Phase 6 交付前须人工抽查 ≥3 篇参考文献的 DOI 真实性。"
+        )
 
     # 逐 DOI 调用 CrossRef
     mismatches = []
