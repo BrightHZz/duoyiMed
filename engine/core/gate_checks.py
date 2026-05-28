@@ -2140,6 +2140,287 @@ def _read_section_from_disk(project_dir, keyword: str) -> tuple:
     return None, None
 
 
+def _is_review_project(proj_dir) -> bool:
+    """从 sds.md 解析项目类型字段, 判定是否为综述项目.
+
+    SDS 是每个项目的 Phase 0 强制产出, 含标准表格:
+    | 项目类型 | literature_review → paper_writing (综述) |
+    """
+    import re
+    from pathlib import Path
+    proj_dir = Path(proj_dir)
+    sds_path = proj_dir / "sds.md"
+    if not sds_path.exists():
+        return False
+    try:
+        text = sds_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    m = re.search(r'\|\s*项目类型\s*\|\s*([^|]+)\s*\|', text)
+    if not m:
+        return False
+    type_val = m.group(1).strip()
+    return "literature_review" in type_val or "综述" in type_val
+
+
+def check_review_table_prose_consistency(outputs: dict, orch) -> tuple:
+    """综述项目: 验证 Table 1 行级数据与正文 prose 汇总声明的一致性.
+
+    检查项:
+    - 合并检出率分子/分母 vs Table 1 各行加总
+    - 研究数 vs Table 1 分组行数
+    - 患者数下限 vs 已知 N 求和
+    - 总研究数 vs Table 1 全部数据行数
+    """
+    import re
+    from pathlib import Path
+
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id:
+        return True, "跳过 (无 project_id)"
+
+    proj_dir = _find_project_dir(orch, project_id)
+    if not proj_dir:
+        return True, "跳过 (无法定位项目目录)"
+
+    # 仅综述项目执行
+    if not _is_review_project(proj_dir):
+        return True, "跳过 (非综述项目)"
+
+    results_path = proj_dir / "sections" / "04_results.md"
+    if not results_path.exists():
+        return True, "跳过 (未找到 sections/04_results.md)"
+
+    try:
+        text = results_path.read_text(encoding="utf-8")
+    except OSError:
+        return True, "跳过 (无法读取 04_results.md)"
+
+    # ── 分组名规范化: Table 1 和 Summary 表使用不同变体名 ──
+    def _normalize_group(name: str) -> str:
+        name = name.strip().lower()
+        mapping = {
+            "transperineal — ultrasound-guided": "tp_us",
+            "transperineal — us-guided": "tp_us",
+            "transperineal — mri-us fusion": "tp_mri",
+            "ct-guided — transgluteal route": "ct_tg",
+            "ct-guided — transgluteal": "ct_tg",
+            "ct-guided — transperineal route": "ct_tp",
+            "ct-guided — transperineal": "ct_tp",
+        }
+        return mapping.get(name, name)
+
+    # ── 步骤 1: 解析 Table 1 各行数据 ──
+    groups = {}  # {canonical_key: {"studies": int, "total_n": int, "total_detected": int, "known_n_count": int, "display_name": str}}
+    current_group = None
+    all_study_rows = 0
+    all_n_values = []
+
+    data_row_pattern = re.compile(r'^\|\s*(.+?)\s*\|\s*\d{4}\s*\|')
+    group_header_pattern = re.compile(r'^\|\s*\*\*(.+?)\*\*\s*\|')
+
+    for line in text.split('\n'):
+        gm = group_header_pattern.match(line)
+        if gm:
+            raw_name = gm.group(1).strip()
+            canonical = _normalize_group(raw_name)
+            if canonical not in groups:
+                groups[canonical] = {
+                    "studies": 0, "total_n": 0,
+                    "total_detected": 0, "known_n_count": 0,
+                    "display_name": raw_name,
+                }
+            current_group = canonical
+            continue
+
+        dm = data_row_pattern.match(line)
+        if dm and current_group:
+            cols = [c.strip() for c in line.split('|')]
+            if len(cols) < 9:
+                continue
+
+            n_col = cols[4]
+            detect_col = cols[7]
+
+            groups[current_group]["studies"] += 1
+            all_study_rows += 1
+
+            n_val = _parse_n_column(n_col)
+            if n_val is not None:
+                groups[current_group]["total_n"] += n_val
+                groups[current_group]["known_n_count"] += 1
+                all_n_values.append(n_val)
+
+            det_numer, det_denom = _parse_detection_column(detect_col)
+            if det_numer is not None and det_denom is not None:
+                groups[current_group]["total_detected"] += det_numer
+
+    if not groups:
+        return True, "跳过 (未解析到 Table 1 数据)"
+
+    # ── 步骤 2: 从 prose 提取 pooled rate 声明 ──
+    violations = []
+
+    prose_sections = re.split(r'\n##\s+', text)
+
+    for canonical, gdata in groups.items():
+        if gdata["total_detected"] == 0:
+            continue
+
+        display = gdata["display_name"]
+        pooled_pattern = re.compile(
+            r'\*\*Pooled cancer detection rate:\s*([\d.]+)%\s*\((\d+)/(\d+)\s*patients?\)\s*across\s*(\d+)\s*studies',
+            re.IGNORECASE
+        )
+
+        for section in prose_sections:
+            pm = pooled_pattern.search(section)
+            if pm:
+                prose_detected = int(pm.group(2))
+                prose_patients = int(pm.group(3))
+                prose_studies = int(pm.group(4))
+
+                # 按研究数+患者数匹配分组
+                if (prose_studies == gdata["studies"] or
+                        abs(prose_patients - gdata["total_n"]) <= 2):
+                    if prose_detected != gdata["total_detected"]:
+                        violations.append(
+                            f"[{display}] 检出数不符: "
+                            f"Table 1 加总 = {gdata['total_detected']}, "
+                            f"正文声明 = {prose_detected}"
+                        )
+                    if prose_patients != gdata["total_n"]:
+                        violations.append(
+                            f"[{display}] 患者数不符: "
+                            f"Table 1 加总 = {gdata['total_n']}, "
+                            f"正文声明 = {prose_patients}"
+                        )
+                    if prose_studies != gdata["studies"]:
+                        violations.append(
+                            f"[{display}] 研究数不符: "
+                            f"Table 1 行数 = {gdata['studies']}, "
+                            f"正文声明 = {prose_studies}"
+                        )
+                    break
+
+    # ── 步骤 3: 检查总研究数 ──
+    total_studies_pattern = re.compile(
+        r'(\d+)\s*primary studies spanning',
+        re.IGNORECASE
+    )
+    tsm = total_studies_pattern.search(text)
+    if tsm:
+        prose_total_studies = int(tsm.group(1))
+        if prose_total_studies != all_study_rows:
+            violations.append(
+                f"[总计] 总研究数不符: "
+                f"Table 1 数据行 = {all_study_rows}, "
+                f"正文声明 = {prose_total_studies}"
+            )
+
+    # ── 步骤 4: 解析 Summary 表, 按分组检查患者数和检出率 ──
+    summary_group_pattern = re.compile(
+        r'\|\s*\*\*(.+?)\*\*\s*\|\s*(\d+)\s*\|\s*(≥?\d+)[^|]*\|'
+    )
+    for line in text.split('\n'):
+        sm = summary_group_pattern.match(line)
+        if sm:
+            s_canonical = _normalize_group(sm.group(1).strip())
+            s_studies = int(sm.group(2))
+            s_patients_str = sm.group(3).strip()
+
+            if s_canonical in groups:
+                gdata = groups[s_canonical]
+                display = gdata["display_name"]
+
+                if s_studies != gdata["studies"]:
+                    violations.append(
+                        f"[{display}] Summary 表研究数不符: "
+                        f"Table 1 行数 = {gdata['studies']}, "
+                        f"Summary 表 = {s_studies}"
+                    )
+
+                if s_patients_str.startswith('≥'):
+                    prose_min = int(s_patients_str[1:])
+                    group_unknown = gdata["studies"] - gdata["known_n_count"]
+                    actual_min = gdata["total_n"] + group_unknown
+                    if prose_min < actual_min:
+                        violations.append(
+                            f"[{display}] Summary 表患者数下限不符: "
+                            f"已知 N = {gdata['total_n']}, 未知 N 研究 = {group_unknown}, "
+                            f"实际下限 = ≥{actual_min}, "
+                            f"Summary 表 = ≥{prose_min}"
+                        )
+                else:
+                    prose_patients = int(s_patients_str)
+                    if prose_patients != gdata["total_n"]:
+                        violations.append(
+                            f"[{display}] Summary 表患者数不符: "
+                            f"Table 1 N 加总 = {gdata['total_n']}, "
+                            f"Summary 表 = {prose_patients}"
+                        )
+
+    # ── 步骤 5: 检查最大样本量 ──
+    if all_n_values:
+        actual_max = max(all_n_values)
+        largest_pattern = re.compile(
+            r'largest series enrolled (\d+) patients',
+            re.IGNORECASE
+        )
+        lm = largest_pattern.search(text)
+        if lm:
+            prose_max = int(lm.group(1))
+            if prose_max != actual_max:
+                violations.append(
+                    f"[总计] 最大样本量不符: "
+                    f"Table 1 max(N) = {actual_max}, "
+                    f"正文声明 = {prose_max}"
+                )
+
+    if violations:
+        return False, (
+            f"Table 1 ↔ 正文不一致 ({len(violations)} 项):\n" +
+            "\n".join(f"  • {v}" for v in violations)
+        )
+
+    return True, (
+        f"全部通过 ✓ "
+        f"({all_study_rows} 篇研究, {len(groups)} 个分组, "
+        f"检出率/研究数/患者数全部一致)"
+    )
+
+
+def _parse_n_column(n_col: str):
+    """解析 Table 1 的 N 列, 返回 int 或 None."""
+    import re
+    if not n_col or n_col in ('—', 'N/A', ''):
+        return None
+    # 提取数字: "28", "12†", "—" 等
+    m = re.match(r'(\d+)', n_col.strip())
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _parse_detection_column(detect_col: str):
+    """解析 Table 1 的 Cancer Detection 列, 返回 (detected, denominator) 或 (None, None).
+
+    支持格式: "23/28 (82.1%)", "Qualitative*", "52.8% csPCa", "3/6 (50%) csPCa"
+    """
+    import re
+    if not detect_col or detect_col in ('—', 'N/A', ''):
+        return None, None
+    # 忽略纯定性报告
+    if 'Qualitative' in detect_col or 'Reported' in detect_col:
+        return None, None
+    # 匹配 X/Y 格式 (可能带百分比和 csPCa 标注)
+    m = re.search(r'(\d+)\s*/\s*(\d+)', detect_col)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    # 只有百分比的情况 (如 "52.8% csPCa"): 无法获取分子分母, 跳过
+    return None, None
+
+
 def check_methods_excessive_subsections(outputs: dict, orch) -> tuple:
     """Methods 子标题不超过 5 个(五大标准段落), 防止 checklist→header 映射导致章节碎片化
 
@@ -5795,6 +6076,7 @@ GATE_DEFINITIONS = {
             "no_review_citing_review": check_no_review_citing_review,             # 2026-05-27: 综述禁止引用综述 (规则二)
             "citation_stacking": check_citation_stacking,                         # 2026-05-27: 引用堆砌检测 (规则三)
             "classic_ratio": check_classic_ratio,                                 # 2026-05-27: 经典文献占比 ≤5% (规则二)
+            "review_table_prose_consistency": check_review_table_prose_consistency,  # 2026-05-28: 综述 Table 1 ↔ 正文 self-consistency
         },
         "llm_checks": [
             "Methods ↔ Results 是否 1:1 对应? (Methods 声明的每个分析方法在 Results 中是否有对应结果报告)",
