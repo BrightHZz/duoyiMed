@@ -516,24 +516,24 @@ def check_manuscript_assembled(outputs: dict, orch) -> tuple:
     """检查 manuscript.md 是否存在且包含所有 IMRAD 章节"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            # Check the output string for complete IMRAD structure
-            required_sections = [
-                ("abstract", "## Abstract"),
-                ("introduction", "## Introduction"),
-                ("methods", "## Methods"),
-                ("results", "## Results"),
-                ("discussion", "## Discussion"),
-            ]
-            missing = []
-            for sec_name, sec_pattern in required_sections:
-                if sec_pattern not in output:
-                    missing.append(sec_name)
-            if missing:
-                return False, f"manuscript 缺少 IMRAD 章节: {missing}"
-            # Also check for Conclusion (independent ## section)
-            if "## Conclusion" not in output:
-                return False, "manuscript 缺少独立 ## Conclusion 章节"
-            return True, "manuscript.md 结构完整 (IMRAD + Conclusion)"
+            if output.strip():
+                # Check the output string for complete IMRAD structure
+                required_sections = [
+                    ("abstract", "## Abstract"),
+                    ("introduction", "## Introduction"),
+                    ("methods", "## Methods"),
+                    ("results", "## Results"),
+                    ("discussion", "## Discussion"),
+                ]
+                missing = []
+                for sec_name, sec_pattern in required_sections:
+                    if sec_pattern not in output:
+                        missing.append(sec_name)
+                if missing:
+                    return False, f"manuscript 缺少 IMRAD 章节: {missing}"
+                if "## Conclusion" not in output:
+                    return False, "manuscript 缺少独立 ## Conclusion 章节"
+                return True, "manuscript.md 结构完整 (IMRAD + Conclusion)"
 
     # Check filesystem for manuscript.md (投稿层 submission/manuscript.md)
     import os
@@ -555,12 +555,65 @@ def check_conclusion_heading_level(outputs: dict, orch) -> tuple:
     """Conclusion 为 ## 独立章节 (而非 ### 子章节)"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            if "### Conclusion" in output and "## Conclusion" not in output:
-                return False, "Conclusion 被写为 ### (Discussion 的子章节), 应为 ## (独立章节)"
-            if "## Conclusion" in output:
-                return True, "Conclusion 为 ## 独立章节 ✓"
-            return True, "跳过 (未检测到 Conclusion 内容)"
+            if output.strip():
+                if "### Conclusion" in output and "## Conclusion" not in output:
+                    return False, "Conclusion 被写为 ### (Discussion 的子章节), 应为 ## (独立章节)"
+                if "## Conclusion" in output:
+                    return True, "Conclusion 为 ## 独立章节 ✓"
+                return True, "跳过 (未检测到 Conclusion 内容)"
+
+    # 文件系统回退: 直接读 manuscript.md
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        if "### Conclusion" in content and "## Conclusion" not in content:
+            return False, "Conclusion 被写为 ### (Discussion 的子章节), 应为 ## (独立章节)"
+        if "## Conclusion" in content:
+            return True, "Conclusion 为 ## 独立章节 ✓"
+        return True, "跳过 (未检测到 Conclusion 内容)"
+
     return True, "跳过 (无 scientific-writer 输出)"
+
+
+def check_conclusion_no_refs(outputs: dict, orch) -> tuple:
+    """Conclusion 段不得包含参考文献引用 [N]"""
+    # 先尝试从 agent output 检测
+    for agent_id, output in outputs.items():
+        if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
+            if output.strip():
+                conclusion_match = re.search(
+                    r'^## Conclusion\s*\n(.*?)(?=^## |\Z)',
+                    output, re.MULTILINE | re.DOTALL
+                )
+                if conclusion_match:
+                    conclusion_text = conclusion_match.group(1)
+                    citations = re.findall(r'\[[\d,\-]+\]', conclusion_text)
+                    if citations:
+                        return False, f"Conclusion 段包含参考文献引用: {', '.join(citations[:5])}"
+                    return True, "Conclusion 段无参考文献引用 ✓"
+
+    # 回退: 从文件系统读取 manuscript.md
+    from pathlib import Path
+    project_id = getattr(orch, '_current_project_id', None)
+    if project_id and hasattr(orch, 'kb') and orch.kb:
+        for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
+            proj_dir = Path(vault_path) / 'projects' / project_id
+            for manuscript_rel in ['submission/manuscript.md', 'sections/manuscript.md']:
+                manuscript_path = proj_dir / manuscript_rel
+                if manuscript_path.exists():
+                    content = manuscript_path.read_text(encoding='utf-8')
+                    conclusion_match = re.search(
+                        r'^## Conclusion\s*\n(.*?)(?=^## |\Z)',
+                        content, re.MULTILINE | re.DOTALL
+                    )
+                    if not conclusion_match:
+                        return True, "跳过 (未检测到 Conclusion 段)"
+                    conclusion_text = conclusion_match.group(1)
+                    citations = re.findall(r'\[[\d,\-]+\]', conclusion_text)
+                    if citations:
+                        return False, f"Conclusion 段包含参考文献引用: {', '.join(citations[:5])}"
+                    return True, "Conclusion 段无参考文献引用 ✓"
+
+    return True, "跳过 (未检测到 Conclusion 段)"
 
 
 def check_doi_verification(outputs: dict, orch) -> tuple:
@@ -608,12 +661,72 @@ def check_doi_verification(outputs: dict, orch) -> tuple:
     return True, "跳过 (无 scientific-writer 输出)"
 
 
+def _extract_cited_title(line: str) -> str:
+    """从参考文献行提取被引标题.
+
+    格式: {N}. {Authors}. {Title}. {Journal}. {Year};{Vol}({Issue}):{Pages}. {doi/PMID}
+    策略: 移除首尾标记 → 找出版年 ". YYYY;" → 分离期刊名 → 分离作者 → 余下即标题.
+    """
+    # 移除编号前缀和 doi/PMID 后缀
+    text = re.sub(r'^\d+\.\s+', '', line)
+    text = re.sub(r'\s*(doi:\s*\S+|PMID:\s*\d+)\s*$', '', text).rstrip('.').strip()
+
+    # 找出版年: ". YYYY;" 或 ". YYYY."
+    pub_m = re.search(r'\.\s+(\d{4})[;.]', text)
+    if not pub_m:
+        return None
+
+    before_year = text[:pub_m.start()]
+
+    # 按 ". " 分割, 最后一段是期刊缩写, 其余是作者+标题
+    segs = before_year.split('. ')
+    if len(segs) < 2:
+        return None
+
+    authors_title = '. '.join(segs[:-1])
+
+    # 有 "et al." → 标题在 et al. 之后
+    et_al_pos = authors_title.find('et al.')
+    if et_al_pos >= 0:
+        title_start = et_al_pos + len('et al.')
+        while title_start < len(authors_title) and authors_title[title_start] in '. ':
+            title_start += 1
+        title = authors_title[title_start:].strip()
+        return re.sub(r'\s+', ' ', title) if title else None
+
+    # 无 "et al." → 按 ". " 分割 authors_title, 最后一段是标题
+    parts = authors_title.split('. ')
+    if len(parts) >= 2:
+        title = parts[-1].strip()
+        return re.sub(r'\s+', ' ', title) if title else None
+
+    return None
+
+
+def _read_manuscript_from_filesystem(orch) -> str:
+    """从项目文件系统读取 manuscript.md 内容 (CLI 模式回退用)."""
+    from pathlib import Path
+    project_id = getattr(orch, '_current_project_id', None)
+    if not project_id or not hasattr(orch, 'kb') or not orch.kb:
+        return ""
+    for vault_name, vault_path in getattr(orch.kb, 'vaults', {}).items():
+        proj_dir = Path(vault_path) / 'projects' / project_id
+        for manuscript_rel in ['submission/manuscript.md', 'manuscript.md']:
+            manuscript_path = proj_dir / manuscript_rel
+            if manuscript_path.exists():
+                try:
+                    return manuscript_path.read_text(encoding='utf-8')
+                except OSError:
+                    pass
+    return ""
+
+
 def check_doi_title_match(outputs: dict, orch) -> tuple:
     """DOI 标题一致性检查 — 验证每个 DOI 解析到的论文标题与引用标题是否匹配。
 
     调用 CrossRef API 获取 DOI 对应的真实标题，与被引标题做模糊匹配。
-    similarity < 0.7 → FAIL (DOI 指向不同论文)
-    0.7 ≤ similarity < 0.85 → COND_PASS (待人工确认)
+    similarity < 0.5 → FAIL (DOI 指向不同论文)
+    0.5 ≤ similarity < 0.85 → COND_PASS (标题变体, 待人工确认)
     similarity ≥ 0.85 → PASS
     """
     import difflib
@@ -644,6 +757,7 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
 
     # 逐条解析引用: {ref_num, cited_title, doi}
     refs = []
+    no_doi_refs = []  # 收集无 DOI 的参考文献编号
     lines = refs_text.split('\n')
     for line in lines:
         m = re.match(r'^(\d+)\.\s+', line)
@@ -653,30 +767,14 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
         # 提取 DOI
         doi_m = re.search(r'(10\.\d{4,}/[^\s"\']+)', line)
         if not doi_m:
+            no_doi_refs.append(ref_num)
             continue
         doi = doi_m.group(1).rstrip('.').rstrip(',')
-        # 提取被引标题: 位于 "et al. " 或 ". " 之后，到 ". <Journal>" 之前
-        # 模式: Authors . Title text . Journal ...
-        cited_title = None
-        # Strip authors part: everything before and including "et al. " or last author pattern
-        title_match = re.match(
-            r'^\d+\.\s+'           # ref number
-            r'(?:[A-Z][a-z]+\s+[A-Z]\.?,?\s*)+'  # author surnames + initials
-            r'(?:et al\.?\s*)?'    # optional et al
-            r'[.\s]*'              # separator
-            r'(.+?)'               # TITLE (captured)
-            r'\.\s+'               # period + space
-            r'[A-Z][a-z]+'         # Journal name start (capitalized)
-            , line)
-        if title_match:
-            cited_title = title_match.group(1).strip()
-        else:
-            # Fallback: try to extract between ". " after et al and ". " before journal
-            # Simpler approach: find the title between two significant periods
-            parts = re.split(r'\.\s+(?=[A-Z])', line)
-            if len(parts) >= 3:
-                # parts[0] = ref num + authors, parts[1] = title, parts[2:] = journal etc
-                cited_title = parts[1].strip()
+        # 提取被引标题: {N}. {Authors}. {Title}. {Journal}. {Year};{Vol}... {doi}
+        # 策略：找出版年 ". YYYY;" → 向前取 journal → 剩余部分分离作者和标题
+        cited_title = _extract_cited_title(line)
+        if not cited_title:
+            continue
 
         if cited_title:
             # Clean the title
@@ -739,15 +837,30 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
         cited_clean = html_mod.unescape(ref["cited_title"]).lower()
         crossref_clean = html_mod.unescape(crossref_title).lower()
         # 去标点、规范化空格
-        for ch in '.,;:()[]{}"\'!?-':
+        for ch in '.,;:()[]{}"\'!?':
             cited_clean = cited_clean.replace(ch, ' ')
             crossref_clean = crossref_clean.replace(ch, ' ')
+        # 统一破折号
+        for dash in ['–', '—', '–']:
+            cited_clean = cited_clean.replace(dash, ' ')
+            crossref_clean = crossref_clean.replace(dash, ' ')
+        # 缩写展开
+        cited_clean = re.sub(r'\bvs\b', 'versus', cited_clean)
+        crossref_clean = re.sub(r'\bvs\b', 'versus', crossref_clean)
         cited_clean = ' '.join(cited_clean.split())
         crossref_clean = ' '.join(crossref_clean.split())
 
         similarity = difflib.SequenceMatcher(None, cited_clean, crossref_clean).ratio()
 
-        if similarity < 0.7:
+        # 前缀匹配: 取较短标题的长度, 比较前缀相似度 (处理副标题截断差异)
+        min_len = min(len(cited_clean), len(crossref_clean))
+        if min_len > 20:
+            prefix_sim = difflib.SequenceMatcher(
+                None, cited_clean[:min_len], crossref_clean[:min_len]
+            ).ratio()
+            similarity = max(similarity, prefix_sim)
+
+        if similarity < 0.5:
             mismatches.append(
                 f"[{ref['num']}] cited=\"{ref['cited_title'][:100]}\" "
                 f"CrossRef=\"{crossref_title[:100]}\" sim={similarity:.2f}"
@@ -758,9 +871,9 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
                 f"cited=\"{ref['cited_title'][:80]}\" vs CrossRef=\"{crossref_title[:80]}\""
             )
 
-    # 判定
+    # 判定: sim < 0.5 → FAIL (不同论文), 0.5 ≤ sim < 0.85 → COND_PASS (标题变体)
     if mismatches:
-        fail_count = sum(1 for m in mismatches if "sim=" in m and float(re.search(r'sim=([\d.]+)', m).group(1)) < 0.7)
+        fail_count = sum(1 for m in mismatches if "sim=" in m and float(re.search(r'sim=([\d.]+)', m).group(1)) < 0.5)
         if fail_count > 0:
             return False, f"DOI-标题不匹配 ({fail_count} FAIL): {'; '.join(mismatches[:5])}"
         return False, f"DOI-标题低相似 ({len(mismatches)} COND_PASS): {'; '.join(mismatches[:3])}"
@@ -768,7 +881,10 @@ def check_doi_title_match(outputs: dict, orch) -> tuple:
     if errors:
         return True, f"标题匹配通过 (DOI 解析: {len(refs)-len(errors)} OK, {len(errors)} 网络/API 错误, 委托 check_doi_verification)"
 
-    return True, f"DOI-标题匹配通过 ({len(refs)}/{len(refs)} similarity ≥ 0.85)"
+    success_msg = f"DOI-标题匹配通过 ({len(refs)}/{len(refs)} similarity ≥ 0.85"
+    if no_doi_refs:
+        success_msg += f"; WARN: {len(no_doi_refs)} 篇无 DOI, 无法校验标题一致性: [{', '.join(str(n) for n in no_doi_refs[:10])}]"
+    return True, success_msg
 
 
 def check_ref_count(outputs: dict, orch) -> tuple:
@@ -1738,125 +1854,149 @@ def check_discussion_seven_paragraphs(outputs: dict, orch) -> tuple:
     """Discussion 七段结构检测 — 按空行拆段, ≥6段 + ¶3/¶4含文献引用 + ¶7含局限"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            if "## Discussion" not in output:
-                return True, "跳过 (无 Discussion 章节)"
+            if output.strip():
+                if "## Discussion" not in output:
+                    return True, "跳过 (无 Discussion 章节)"
+                return _check_discussion_seven_paragraphs(output)
 
-            # 提取 Discussion 内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
-            if not disc_match:
-                return True, "跳过"
-            disc = disc_match.group(1)
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        if "## Discussion" not in content:
+            return True, "跳过 (无 Discussion 章节)"
+        return _check_discussion_seven_paragraphs(content)
 
-            # 按空行拆段 (≥2个连续换行)
-            paragraphs = re.split(r'\n{2,}', disc.strip())
-            paragraphs = [p.strip() for p in paragraphs if p.strip()]
-
-            if len(paragraphs) < 6:
-                return False, (
-                    f"Discussion 仅 {len(paragraphs)} 段空行分隔, 需 ≥6 段 "
-                    f"(七段式: ¶1核心发现/¶2机制解释/¶3文献一致/¶4文献不一致/¶5含义/¶6优势/¶7局限+未来方向)"
-                )
-
-            # 检测文献引用是否集中在中段 (¶2-¶5 ≈ literature comparison area)
-            # Discussion 必须包含文献引用, 但不在 ¶1 强制检查
-            has_citations = bool(re.search(r'\[\d+', disc))
-            if not has_citations:
-                return False, "Discussion 未检测到任何文献引用 — 文献对比 (¶3/¶4) 必须引用文献"
-
-            # 检测末段是否含局限相关关键词
-            last_para = paragraphs[-1]
-            has_limitations = bool(
-                re.search(r'limitation|局限|limitation|limitations', last_para, re.I)
-            )
-            if not has_limitations:
-                return False, "Discussion 末段 (¶7) 应包含局限性讨论"
-
-            # 检测是否有机制解释区域 (¶2)
-            # 在前 1/3 区域内搜索 mechanism/explain/interpret/pathway
-            first_third_idx = max(1, len(paragraphs) // 3)
-            early_content = '\n'.join(paragraphs[:first_third_idx])
-            has_explanation = bool(re.search(
-                r'mechanism|pathway|explanation|explain|interpret|'
-                r'may reflect|one possible|likely reflects|'
-                r'可能机制|可能原因|解释',
-                early_content, re.I
-            ))
-            if not has_explanation:
-                return False, (
-                    "Discussion 前段 (¶2 区域) 应包含发现解读/机制解释 "
-                    "(mechanism/explanation/pathway/may reflect...)"
-                )
-
-            return True, f"Discussion 七段结构检测通过 ({len(paragraphs)} 段空行分隔)"
     return True, "跳过"
+
+
+def _check_discussion_seven_paragraphs(text: str) -> tuple:
+    """Discussion 七段检测核心逻辑，text 为 manuscript 全文或章节内容."""
+    disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', text, re.DOTALL)
+    if not disc_match:
+        return True, "跳过"
+    disc = disc_match.group(1)
+
+    paragraphs = re.split(r'\n{2,}', disc.strip())
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+    if len(paragraphs) < 6:
+        return False, (
+            f"Discussion 仅 {len(paragraphs)} 段空行分隔, 需 ≥6 段 "
+            f"(七段式: ¶1核心发现/¶2机制解释/¶3文献一致/¶4文献不一致/¶5含义/¶6优势/¶7局限+未来方向)"
+        )
+
+    has_citations = bool(re.search(r'\[\d+', disc))
+    if not has_citations:
+        return False, "Discussion 未检测到任何文献引用 — 文献对比 (¶3/¶4) 必须引用文献"
+
+    last_para = paragraphs[-1]
+    has_limitations = bool(
+        re.search(r'limitation|局限|limitation|limitations', last_para, re.I)
+    )
+    if not has_limitations:
+        return False, "Discussion 末段 (¶7) 应包含局限性讨论"
+
+    first_third_idx = max(1, len(paragraphs) // 3)
+    early_content = '\n'.join(paragraphs[:first_third_idx])
+    has_explanation = bool(re.search(
+        r'mechanism|pathway|explanation|explain|interpret|'
+        r'may reflect|one possible|likely reflects|'
+        r'可能机制|可能原因|解释',
+        early_content, re.I
+    ))
+    if not has_explanation:
+        return False, (
+            "Discussion 前段 (¶2 区域) 应包含发现解读/机制解释 "
+            "(mechanism/explanation/pathway/may reflect...)"
+        )
+
+    return True, f"Discussion 七段结构检测通过 ({len(paragraphs)} 段空行分隔)"
 
 
 def check_discussion_last_para_no_conclusion(outputs: dict, orch) -> tuple:
     """Discussion 末段 (¶7) 末尾无结论性收束句 — 以局限缓解说明+未来方向收尾, 不加总结标语"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            if "## Discussion" not in output:
-                return True, "跳过"
-            # 提取 Discussion 到 Conclusion 之间的内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=## Conclusion|\Z)', output, re.DOTALL)
-            if not disc_match:
-                return True, "跳过"
-            disc_content = disc_match.group(1)
+            if output.strip():
+                if "## Discussion" not in output:
+                    return True, "跳过"
+                return _check_discussion_last_para_no_conclusion(output)
 
-            # 检查 Discussion 末段是否有结论性收束
-            prohibited = [
-                "In conclusion", "Taken together", "Overall", "In summary",
-                "我们的研究表明", "综上所述", "总而言之",
-                "paving the way", "ushering in", "highlighting the potential",
-            ]
-            # 取 Discussion 最后 500 字符 (末段区域)
-            last_part = disc_content[-500:] if len(disc_content) > 500 else disc_content
-            for phrase in prohibited:
-                if phrase.lower() in last_part.lower():
-                    return False, f"Discussion 末段 (¶7) 含结论性收束短语: '{phrase}'"
-            return True, "Discussion 末段无结论性收束句 ✓"
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        if "## Discussion" not in content:
+            return True, "跳过"
+        return _check_discussion_last_para_no_conclusion(content)
+
     return True, "跳过"
+
+
+def _check_discussion_last_para_no_conclusion(text: str) -> tuple:
+    disc_match = re.search(r'## Discussion\n(.*?)(?=## Conclusion|\Z)', text, re.DOTALL)
+    if not disc_match:
+        return True, "跳过"
+    disc_content = disc_match.group(1)
+
+    prohibited = [
+        "In conclusion", "Taken together", "Overall", "In summary",
+        "我们的研究表明", "综上所述", "总而言之",
+        "paving the way", "ushering in", "highlighting the potential",
+    ]
+    last_part = disc_content[-500:] if len(disc_content) > 500 else disc_content
+    for phrase in prohibited:
+        if phrase.lower() in last_part.lower():
+            return False, f"Discussion 末段 (¶7) 含结论性收束短语: '{phrase}'"
+    return True, "Discussion 末段无结论性收束句 ✓"
 
 
 def check_discussion_explanation_section(outputs: dict, orch) -> tuple:
     """Discussion ¶2 区域包含发现解读/机制解释 — 对齐 JAMA Editors Guide §2 'Possible explanations'"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            if "## Discussion" not in output:
-                return True, "跳过 (无 Discussion 章节)"
-            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
-            if not disc_match:
-                return True, "跳过"
-            disc = disc_match.group(1)
+            if output.strip():
+                if "## Discussion" not in output:
+                    return True, "跳过 (无 Discussion 章节)"
+                return _check_discussion_explanation(output)
 
-            # 按空行拆段
-            paragraphs = re.split(r'\n{2,}', disc.strip())
-            paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        if "## Discussion" not in content:
+            return True, "跳过 (无 Discussion 章节)"
+        return _check_discussion_explanation(content)
 
-            if len(paragraphs) < 3:
-                return True, "跳过 (段落数不足)"
-
-            # 在前 1/3 区域搜索机制解释关键词
-            first_third_idx = max(1, len(paragraphs) // 3)
-            early_content = '\n'.join(paragraphs[:first_third_idx])
-
-            explanation_patterns = [
-                r'\bmechanism', r'\bpathway', r'\bexplanation', r'\bexplain',
-                r'\binterpret', r'may reflect', r'likely reflects',
-                r'one possible', r'alternative explanation',
-                r'\b可能机制', r'\b可能原因', r'\b解释',
-                r'role of', r'mediated by', r'attributable to',
-            ]
-            has_explanation = any(
-                re.search(pat, early_content, re.I) for pat in explanation_patterns
-            )
-            if has_explanation:
-                return True, "Discussion ¶2 区域含机制解释 ✓"
-            return False, (
-                "Discussion 前段 (¶2 区域) 缺少发现解读/机制解释. "
-                "应讨论最可能的解释和替代解释 (JAMA §2 'Possible explanations')"
-            )
     return True, "跳过"
+
+
+def _check_discussion_explanation(text: str) -> tuple:
+    disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', text, re.DOTALL)
+    if not disc_match:
+        return True, "跳过"
+    disc = disc_match.group(1)
+
+    paragraphs = re.split(r'\n{2,}', disc.strip())
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+
+    if len(paragraphs) < 3:
+        return True, "跳过 (段落数不足)"
+
+    first_third_idx = max(1, len(paragraphs) // 3)
+    early_content = '\n'.join(paragraphs[:first_third_idx])
+
+    explanation_patterns = [
+        r'\bmechanism', r'\bpathway', r'\bexplanation', r'\bexplain',
+        r'\binterpret', r'may reflect', r'likely reflects',
+        r'one possible', r'alternative explanation',
+        r'\b可能机制', r'\b可能原因', r'\b解释',
+        r'role of', r'mediated by', r'attributable to',
+    ]
+    has_explanation = any(
+        re.search(pat, early_content, re.I) for pat in explanation_patterns
+    )
+    if has_explanation:
+        return True, "Discussion ¶2 区域含机制解释 ✓"
+    return False, (
+        "Discussion 前段 (¶2 区域) 缺少发现解读/机制解释. "
+        "应讨论最可能的解释和替代解释 (JAMA §2 'Possible explanations')"
+    )
 
 
 # ============================================================
@@ -1867,63 +2007,84 @@ def check_discussion_no_subheadings(outputs: dict, orch) -> tuple:
     """Discussion 不含任何形式子标题 — 七段靠逻辑过渡衔接 (2026-05-14 强化: 5种模式全覆盖)"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            if "## Discussion" not in output:
-                return True, "跳过 (无 Discussion 章节)"
-            # 提取 Discussion 到下一个 ## 之间的内容
-            disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL)
-            if not disc_match:
-                return True, "跳过"
-            disc_content = disc_match.group(1)
+            if output.strip():
+                if "## Discussion" not in output:
+                    return True, "跳过 (无 Discussion 章节)"
+                return _check_discussion_no_subheadings(output)
 
-            # 模式1: ### 子标题
-            h3 = re.findall(r'^### (.+)$', disc_content, re.MULTILINE)
-            if h3:
-                return False, f"Discussion 含 ### 子标题: {h3}"
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        if "## Discussion" not in content:
+            return True, "跳过 (无 Discussion 章节)"
+        return _check_discussion_no_subheadings(content)
 
-            # 模式2: **粗体行** 作为伪子标题 (≤6 词的独立行) — 2026-05-14 新增
-            bold_lines = re.findall(r'^\*\*(.+?)\*\*\s*$', disc_content, re.MULTILINE)
-            fake_headings = [b.strip() for b in bold_lines if len(b.split()) <= 6]
-            if fake_headings:
-                return False, (
-                    f"Discussion 含粗体伪子标题: {fake_headings}. "
-                    f"七段应仅靠空行分隔, 不使用任何标记标示段落名称"
-                )
-
-            # 模式3: ___ 下划线分隔符 (≥3 个连续下划线独立成行)
-            if re.search(r'^_{3,}\s*$', disc_content, re.MULTILINE):
-                return False, "Discussion 含下划线分隔符 (疑似子标题标记)"
-
-            # 模式4: 全大写段名行 (如 "PRINCIPAL FINDINGS" / "LIMITATIONS")
-            caps = re.findall(r'^([A-Z][A-Z\s]{4,})$', disc_content, re.MULTILINE)
-            # 排除常见的全大写缩写行 (如 "AUC" / "SHAP")
-            caps = [c for c in caps if len(c.split()) >= 2]
-            if caps:
-                return False, f"Discussion 含全大写段名: {caps}"
-
-            # 模式5: 编号段名 (如 "1. Findings" / "2. Literature Comparison")
-            numbered = re.findall(r'^(\d+\.\s+\w.{2,})$', disc_content, re.MULTILINE)
-            if numbered:
-                return False, f"Discussion 含编号段名: {numbered}"
-
-            return True, "Discussion 无任何形式子标题 ✓"
     return True, "跳过"
+
+
+def _check_discussion_no_subheadings(text: str) -> tuple:
+    disc_match = re.search(r'## Discussion\n(.*?)(?=\n##\s|\Z)', text, re.DOTALL)
+    if not disc_match:
+        return True, "跳过"
+    disc_content = disc_match.group(1)
+
+    h3 = re.findall(r'^### (.+)$', disc_content, re.MULTILINE)
+    if h3:
+        return False, f"Discussion 含 ### 子标题: {h3}"
+
+    bold_lines = re.findall(r'^\*\*(.+?)\*\*\s*$', disc_content, re.MULTILINE)
+    fake_headings = [b.strip() for b in bold_lines if len(b.split()) <= 6]
+    if fake_headings:
+        return False, (
+            f"Discussion 含粗体伪子标题: {fake_headings}. "
+            f"七段应仅靠空行分隔, 不使用任何标记标示段落名称"
+        )
+
+    if re.search(r'^_{3,}\s*$', disc_content, re.MULTILINE):
+        return False, "Discussion 含下划线分隔符 (疑似子标题标记)"
+
+    caps = re.findall(r'^([A-Z][A-Z\s]{4,})$', disc_content, re.MULTILINE)
+    caps = [c for c in caps if len(c.split()) >= 2]
+    if caps:
+        return False, f"Discussion 含全大写段名: {caps}"
+
+    numbered = re.findall(r'^(\d+\.\s+\w.{2,})$', disc_content, re.MULTILINE)
+    if numbered:
+        return False, f"Discussion 含编号段名: {numbered}"
+
+    return True, "Discussion 无任何形式子标题 ✓"
 
 
 def check_abstract_word_count(outputs: dict, orch) -> tuple:
     """Abstract ≤ 300 词"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            import re
-            abs_match = re.search(
-                r'## Abstract\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL | re.IGNORECASE
-            )
-            if abs_match:
-                text = abs_match.group(1).strip()
-                words = len(text.split())
-                if words <= 300:
-                    return True, f"Abstract {words} 词 ≤ 300 词 ✓"
-                return False, f"Abstract 超出 300 词 ({words} 词)"
-            return True, "跳过 (未检测到 Abstract)"
+            if output.strip():
+                import re
+                abs_match = re.search(
+                    r'## Abstract\n(.*?)(?=\n##\s|\Z)', output, re.DOTALL | re.IGNORECASE
+                )
+                if abs_match:
+                    text = abs_match.group(1).strip()
+                    words = len(text.split())
+                    if words <= 300:
+                        return True, f"Abstract {words} 词 ≤ 300 词 ✓"
+                    return False, f"Abstract 超出 300 词 ({words} 词)"
+                return True, "跳过 (未检测到 Abstract)"
+
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        import re
+        abs_match = re.search(
+            r'## Abstract\n(.*?)(?=\n##\s|\Z)', content, re.DOTALL | re.IGNORECASE
+        )
+        if abs_match:
+            text = abs_match.group(1).strip()
+            words = len(text.split())
+            if words <= 300:
+                return True, f"Abstract {words} 词 ≤ 300 词 ✓"
+            return False, f"Abstract 超出 300 词 ({words} 词)"
+        return True, "跳过 (未检测到 Abstract)"
+
     return True, "跳过"
 
 
@@ -1931,18 +2092,33 @@ def check_keywords_count(outputs: dict, orch) -> tuple:
     """Keywords ≥ 3 个"""
     for agent_id, output in outputs.items():
         if "scientific-writer" in agent_id.lower() or "writing" in agent_id.lower():
-            import re
-            kw_match = re.search(
-                r'(?:Keywords|关键词)[:：]\s*(.+?)(?:\n|$)', output, re.IGNORECASE
-            )
-            if kw_match:
-                kw_text = kw_match.group(1)
-                # Split by comma or semicolon
-                keywords = [k.strip() for k in re.split(r'[,;，；]', kw_text) if k.strip()]
-                if len(keywords) >= 3:
-                    return True, f"Keywords {len(keywords)} 个 ≥ 3 ✓"
-                return False, f"Keywords 仅 {len(keywords)} 个, 需 ≥ 3"
-            return False, "未检测到 Keywords 行"
+            if output.strip():
+                import re
+                kw_match = re.search(
+                    r'(?:Keywords|关键词)[:：]\s*(.+?)(?:\n|$)', output, re.IGNORECASE
+                )
+                if kw_match:
+                    kw_text = kw_match.group(1)
+                    keywords = [k.strip() for k in re.split(r'[,;，；]', kw_text) if k.strip()]
+                    if len(keywords) >= 3:
+                        return True, f"Keywords {len(keywords)} 个 ≥ 3 ✓"
+                    return False, f"Keywords 仅 {len(keywords)} 个, 需 ≥ 3"
+                return False, "未检测到 Keywords 行"
+
+    content = _read_manuscript_from_filesystem(orch)
+    if content:
+        import re
+        kw_match = re.search(
+            r'(?:Keywords|关键词)[:：]\s*(.+?)(?:\n|$)', content, re.IGNORECASE
+        )
+        if kw_match:
+            kw_text = kw_match.group(1)
+            keywords = [k.strip() for k in re.split(r'[,;，；]', kw_text) if k.strip()]
+            if len(keywords) >= 3:
+                return True, f"Keywords {len(keywords)} 个 ≥ 3 ✓"
+            return False, f"Keywords 仅 {len(keywords)} 个, 需 ≥ 3"
+        return False, "未检测到 Keywords 行"
+
     return True, "跳过"
 
 
@@ -6033,6 +6209,7 @@ GATE_DEFINITIONS = {
             "missing_data": check_missing_data_reported,
             "software_version": check_software_version_reported,
             "conclusion_heading": check_conclusion_heading_level,
+            "conclusion_no_refs": check_conclusion_no_refs,  # 2026-05-28: Conclusion 禁止引用参考文献
             "doi_verified": check_doi_verification,
             "ref_count": check_ref_count,
             "ref_recency": check_ref_recency,
