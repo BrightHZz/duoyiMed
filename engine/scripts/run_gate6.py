@@ -2,13 +2,18 @@
 """
 Gate 6 自动化检查 CLI — Run Gate 6
 
-执行 24 项 Python 确定性 auto check。
+执行 GATE_DEFINITIONS["writing"]["auto_checks"] 中注册的全部检查。
 Python 管底线 (有没有/对不对), LLM 管上限 (好不好)。
 exit 0 = 全部通过, exit 1 = 有 FAIL。
 
 用法:
     python run_gate6.py --project-dir /path/to/project
     或由编排器直接调用 gate_checks 模块中的 check 函数
+
+单源真原则:
+    本脚本不再维护独立的检查列表。所有检查项从 GATE_DEFINITIONS 读取,
+    gate_checks.py 中新增的任何 check 函数一旦注册到 writing gate,
+    将自动纳入本脚本的执行范围, 无需手动同步。
 """
 
 import sys
@@ -21,98 +26,84 @@ _engine_dir = _this_dir.parent
 if str(_engine_dir) not in sys.path:
     sys.path.insert(0, str(_engine_dir.parent))
 
-from engine.core.gate_checks import (
-    # Phase 6 auto checks (从 GATE_DEFINITIONS["writing"]["auto_checks"] 提取)
-    check_sap_exists,
-    check_journal_config_locked,
-    check_title_length,
-    check_sections_exist,
-    check_tables_exist,
-    check_figures_exist,
-    check_manuscript_assembled,
-    check_abstract_word_count,
-    check_keywords_count,
-    check_all_refs_have_doi,
-    check_auc_has_ci,
-    check_effect_size_with_ci,
-    check_discrimination_and_calibration_reported,
-    check_normality_test_reported,
-    check_missing_data_reported,
-    check_software_version_reported,
-    check_conclusion_heading_level,
-    check_doi_verification,
-    check_doi_title_match,
-    check_ref_count,
-    check_ref_recency,
-    check_all_refs_cited_in_text,
-    check_discussion_seven_paragraphs,
-    check_discussion_no_subheadings,
-    check_discussion_last_para_no_conclusion,
-    check_humanize_quality,
-    check_numerical_traceability,
-    check_numerical_precision_consistency,
-    check_table_stratification_provenance,
-    check_vancouver_reference_order,
-    check_figure_numbering_continuity,
-    check_table1_content_completeness,
-)
+from engine.core.gate_checks import GATE_DEFINITIONS
 
-
-# Gate 6 全部 30 项 Python auto check 注册表
-# (check_id, check_fn, description)
-GATE6_PYTHON_CHECKS = [
-    # 前置检查
-    ("sap_exists", check_sap_exists, "SAP 已签批"),
-    ("journal_config_locked", check_journal_config_locked, "期刊需求已锁定"),
-    # 格式检查
-    ("title_length", check_title_length, "Title ≤ 15 词"),
-    ("sections_exist", check_sections_exist, "Sections 分章节存在 (零件层)"),
-    ("tables_exist", check_tables_exist, "Tables 存在 (双格式)"),
-    ("figures_exist", check_figures_exist, "Figures 存在 + 命名格式 (双格式)"),
-    ("manuscript_assembled", check_manuscript_assembled, "Manuscript 合稿"),
-    ("abstract_word_count", check_abstract_word_count, "Abstract ≤ 300 词"),
-    ("keywords_count", check_keywords_count, "Keywords ≥ 3"),
-    ("conclusion_heading", check_conclusion_heading_level, "Conclusion 独立 ## 章节"),
-    # 引用检查
-    ("all_refs_have_doi", check_all_refs_have_doi, "参考文献 DOI 覆盖 ≥80%"),
-    ("doi_verified", check_doi_verification, "DOI 验证通过 (fake=0)"),
-    ("doi_title_match", check_doi_title_match, "DOI 标题一致性 — CrossRef 解析验证"),
-    ("ref_count", check_ref_count, "参考文献 ≥25/≥45"),
-    ("ref_recency", check_ref_recency, "参考文献时效性 ≥80%"),
-    ("all_refs_cited", check_all_refs_cited_in_text, "每篇参考文献在正文中被引用"),
-    # 内容检查
-    ("auc_has_ci", check_auc_has_ci, "AUC 带 95% CI"),
-    ("effect_size_with_ci", check_effect_size_with_ci, "效应量+CI 报告"),
-    ("discrimination_calibration", check_discrimination_and_calibration_reported, "区分度+校准度"),
-    ("normality_test", check_normality_test_reported, "正态性检验"),
-    ("missing_data", check_missing_data_reported, "缺失数据处理"),
-    ("software_version", check_software_version_reported, "软件+版本号"),
-    # 结构检查
-    ("discussion_paragraphs", check_discussion_seven_paragraphs, "Discussion 七段式"),
-    ("discussion_no_subheadings", check_discussion_no_subheadings, "Discussion 无 ### 子标题"),
-    ("discussion_no_conclusion", check_discussion_last_para_no_conclusion, "Discussion 末段无结论收束句"),
-    # 质量检查
-    ("humanize_quality", check_humanize_quality, "去 AI 味质量检查 (Python 层)"),
-    # 🆕 数值一致性 + 基线合规 + 投稿层完整性
-    ("numerical_traceability", check_numerical_traceability, "数值可追溯性 (偏差 <0.1%)"),
-    ("precision_consistency", check_numerical_precision_consistency, "数值精度跨 manuscript/tables/figures 一致"),
-    # 🆕 数据真实性 + 结构规则 (2026-05-24)
-    ("stratification_provenance", check_table_stratification_provenance, "Table 1 分层数据来源验证 (非 np.random)"),
-    ("vancouver_order", check_vancouver_reference_order, "参考文献 Vancouver 编号顺序"),
-    ("figure_numbering_continuity", check_figure_numbering_continuity, "Figure 编号连续性 (Figure 1 存在 + 无跳号)"),
-    ("table1_content_completeness", check_table1_content_completeness, "Table 1 内容完整性 (占位符 ≤ 20%)"),
+# 基础设施类跳过模式 — 检查"想跑但跑不起来"，非合理不适用
+_INFRA_SKIP_PATTERNS = [
+    "无 project_dir",
+    "无法确定 project_dir",
 ]
 
 
+def _is_infrastructure_skip(detail: str) -> bool:
+    """判断跳过是否由基础设施问题导致（而非合理不适用）"""
+    return any(p in detail for p in _INFRA_SKIP_PATTERNS)
+
+
+def _run_infrastructure_health_check(orch, outputs) -> list:
+    """基础设施自检: 在业务检查之前诊断 CLI 模式的已知限制"""
+    warnings = []
+
+    # 检查 orch 关键属性
+    for attr, desc in [
+        ('_current_project_id', '项目ID'),
+        ('_current_project_dir', '项目目录'),
+        ('project_dir', '项目路径'),
+        ('kb', '知识库'),
+    ]:
+        if not hasattr(orch, attr):
+            warnings.append(f"DummyOrchestrator 缺少 {attr} ({desc})")
+
+    if not hasattr(orch, 'get_project_dir'):
+        warnings.append("DummyOrchestrator 缺少 get_project_dir() 方法, IMRAD 检查将回退到 os.getcwd()")
+
+    if not hasattr(orch, 'state'):
+        warnings.append("DummyOrchestrator 缺少 state 属性, 综述/论著类型检测将失效")
+
+    # 检查输出内容 (CLI 模式的核心限制)
+    writing_output = outputs.get("scientific-writer", "")
+    if not writing_output.strip():
+        warnings.append(
+            "CLI 模式: outputs['scientific-writer'] 为空, "
+            "依赖 agent output 文本扫描的检查将全部跳过 (~30 项)")
+
+    return warnings
+
+
+def _get_description(check_fn) -> str:
+    """从函数 docstring 第一行提取描述, 无 docstring 时回退到函数名"""
+    doc = getattr(check_fn, '__doc__', None)
+    if doc:
+        first_line = doc.strip().split('\n')[0].strip()
+        if first_line:
+            return first_line
+    return check_fn.__name__
+
+
+def _build_checks_from_definitions():
+    """从 GATE_DEFINITIONS["writing"]["auto_checks"] 构建检查列表。
+
+    单源真: 任何时候新增/删除检查, 只需修改 gate_checks.py 的
+    GATE_DEFINITIONS, 本脚本自动跟随。
+    """
+    writing = GATE_DEFINITIONS.get("writing", {})
+    auto_checks = writing.get("auto_checks", {})
+
+    checks = []
+    for check_id, check_fn in auto_checks.items():
+        checks.append((check_id, check_fn, _get_description(check_fn)))
+    return checks
+
+
 class DummyOrchestrator:
-    """最小编排器桩, 供 check 函数获取 project_id"""
+    """最小编排器桩, 供 check 函数获取 project_id 和项目路径"""
 
     def __init__(self, project_id: str, project_dir: Path):
         self._current_project_id = project_id
+        self._current_project_dir = project_dir
+        self.project_dir = project_dir
 
         # 模拟 kb 接口
-        # vault_path 应为项目目录的祖父目录 (例如 laoNianYiXue/),
-        # 使得 vault_path/projects/project_id = project_dir
         vault_path = project_dir.parent.parent
 
         class FakeKB:
@@ -120,37 +111,87 @@ class DummyOrchestrator:
                 def items(self):
                     return [("main", str(vault_path))]
             vaults = FakeVaults()
+
+            @staticmethod
+            def scan_lessons_learned():
+                return []
+
         self.kb = FakeKB()
+
+        # 从 sds.md 检测项目类型 (综述 vs 论著)
+        self.state = self._detect_project_state(project_dir)
+
+    @staticmethod
+    def _detect_project_state(project_dir: Path):
+        """从 sds.md 读取项目类型, 构造 mock state 对象"""
+        import re
+
+        class MockState:
+            user_intent = ""
+
+        state = MockState()
+        sds_path = project_dir / "sds.md"
+        if not sds_path.exists():
+            return state
+
+        try:
+            text = sds_path.read_text(encoding="utf-8")
+            m = re.search(r'\|\s*项目类型\s*\|\s*([^|]+)\s*\|', text)
+            if m:
+                type_val = m.group(1).strip()
+                if "literature_review" in type_val:
+                    state.user_intent = "literature_review"
+                elif "new_project" in type_val:
+                    state.user_intent = "new_project"
+                elif "paper_writing" in type_val:
+                    state.user_intent = "paper_writing"
+        except OSError:
+            pass
+
+        return state
+
+    def get_project_dir(self):
+        return self.project_dir
 
 
 def run_gate6(project_dir: Path) -> dict:
     """
-    执行 Gate 6 全部 28 项 Python auto check。
+    执行 writing gate 全部 Python auto check。
+
+    检查列表从 GATE_DEFINITIONS["writing"]["auto_checks"] 读取,
+    与 gate_checks.py 始终保持一致。
 
     Returns:
-        {"pass": bool, "results": [{"check_id": str, "result": pass/fail/skip, "detail": str}],
-         "pass_count": int, "fail_count": int, "skip_count": int}
+        {"pass": bool, "results": [...], "pass_count": int, "fail_count": int,
+         "skip_count": int, "infra_skip_count": int, "infra_warnings": list}
     """
     project_id = project_dir.name
     orch = DummyOrchestrator(project_id, project_dir)
 
-    # 构建模拟 outputs (空字典, 各 check 函数会从文件系统读取)
     outputs = {
-        "scientific-writer": "",  # 让 check 函数能找到 agent_id
+        "scientific-writer": "",
     }
+
+    gate6_checks = _build_checks_from_definitions()
+
+    # === 基础设施健康自检 ===
+    infra_warnings = _run_infrastructure_health_check(orch, outputs)
 
     results = []
     pass_count = 0
     fail_count = 0
     skip_count = 0
+    infra_skip_count = 0
 
-    for check_id, check_fn, description in GATE6_PYTHON_CHECKS:
+    for check_id, check_fn, description in gate6_checks:
         try:
             passed, detail = check_fn(outputs, orch)
             status = "pass" if passed else "fail"
             if detail.startswith("跳过"):
                 status = "skip"
                 skip_count += 1
+                if _is_infrastructure_skip(detail):
+                    infra_skip_count += 1
             elif passed:
                 pass_count += 1
             else:
@@ -176,6 +217,8 @@ def run_gate6(project_dir: Path) -> dict:
         "pass_count": pass_count,
         "fail_count": fail_count,
         "skip_count": skip_count,
+        "infra_skip_count": infra_skip_count,
+        "infra_warnings": infra_warnings,
     }
 
 
@@ -190,8 +233,10 @@ def main():
             DeprecationWarning, stacklevel=2
         )
 
+    gate6_checks = _build_checks_from_definitions()
+
     parser = argparse.ArgumentParser(
-        description="Gate 6 自动化检查 — 执行 28 项 Python auto check"
+        description=f"Gate 6 自动化检查 — 执行 {len(gate6_checks)} 项 Python auto check (来自 GATE_DEFINITIONS)"
     )
     parser.add_argument(
         "--project-dir", required=True,
@@ -214,10 +259,19 @@ def main():
         import json
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
-        print(f"Gate 6 — {len(GATE6_PYTHON_CHECKS)} 项 Python auto check")
+        # === 基础设施健康检查报告 ===
+        if result.get('infra_warnings'):
+            print("🔧 基础设施健康检查:")
+            for w in result['infra_warnings']:
+                print(f"  ⚠️  {w}")
+            print()
+
+        print(f"Gate 6 — {len(gate6_checks)} 项 Python auto check (GATE_DEFINITIONS)")
         print(f"  项目: {project_dir}")
         print(f"  通过: {result['pass_count']}, 失败: {result['fail_count']}, "
               f"跳过: {result['skip_count']}")
+        if result.get('infra_skip_count', 0) > 0:
+            print(f"  ⚠️  其中 {result['infra_skip_count']} 项跳过可能与基础设施限制有关")
         print()
 
         for r in result["results"]:
@@ -233,10 +287,9 @@ def main():
             print(f"❌ Gate 6 BLOCKED — {result['fail_count']} 项 FAIL")
             print()
 
-            # 提醒 LLM 审查
             print("=" * 60)
             print("⚠️  Python auto checks 完成后, 仍需 LLM semantic checks:")
-            print("  1. Discussion 四段语义 (¶1 发现/¶2 文献/¶3 含义/¶4 局限)")
+            print("  1. Discussion 七段语义审查")
             print("  2. 去 AI 味自然度评估 (非仅表面替换)")
             print("  3. 缩写首次引入确认")
             print("  4. Methods ↔ Results 1:1 对应")

@@ -67,6 +67,9 @@
 | AJCC Staging 8th Ed — Amin et al., CA Cancer J Clin 2017 | 2017 | 癌症分期标准 |
 | EAU Guidelines Prostate Cancer — Mottet et al., 2021+ | 2021+ | 欧洲泌尿外科学会指南 |
 | Clavien-Dindo Classification — Dindo et al., Ann Surg 2004 | 2004 | 手术并发症分级 |
+| TME — Heald & Ryall, Lancet 1986 | 1986 | 全直肠系膜切除术 (TME) 原则 |
+| Shinohara TP Biopsy — Shinohara et al., J Urol 2003 | 2003 | 经会阴前列腺穿刺 APR 术后开创性系列 (最大单中心经验 28 例) |
+| Papanicolaou Transgluteal — Papanicolaou et al., AJR 1996 | 1996 | 首篇 CT 引导经臀前列腺穿刺技术描述 |
 
 ## 数据库 / 数据源
 

@@ -52,7 +52,11 @@
 | 15 | Conclusion ## 独立章节 | scientific-writer | `check_conclusion_heading_level` | writing |
 | 16 | DOI 验证 (fake=0) | scientific-writer | `check_doi_verification` | writing |
 | 17 | 参考文献 ≥ 25 篇 | scientific-writer | `check_ref_count` | writing |
-| 18 | 参考文献时效性 ≥ 80% | scientific-writer | `check_ref_recency` | writing |
+| 18 | 参考文献时效性 近5年≥80% + 近10年≥95% (双重门槛) | scientific-writer | `check_ref_recency` | writing |
+| 18a | 参考文献已发表状态 | scientific-writer | `check_ref_publication_status` 🆕 | writing |
+| 18b | 参考文献禁止教科书 | scientific-writer | `check_no_textbook_citations` 🆕 | writing |
+| 18c | 综述禁止引用综述 | scientific-writer | `check_no_review_citing_review` 🆕 | writing |
+| 18d | 经典文献占比 ≤5% | scientific-writer | `check_classic_ratio` 🆕 | writing |
 | 19 | Discussion 四段落 | scientific-writer | `check_discussion_four_paragraphs` | writing |
 | 20 | Discussion ¶4 无结论收束句 | scientific-writer | `check_discussion_p4_no_conclusion` | writing |
 | 21 | AI 写作模式检查 (18 项禁用词) | scientific-writer | `check_humanize_quality` 🆕 | writing |
@@ -128,7 +132,7 @@
 |---|------|--------|--------|
 | C1 | **参考文献门槛**: agent 写 "论著 ≥35 篇"，gate 检查 ≥25 | `scientific-writer-agent.md:713` | `gate_checks.py:158` |
 | C2 | **参考文献门槛**: agent Quality Checklist 写 "论著 ≥25 篇" vs 前面写 "≥35 篇" | `scientific-writer-agent.md:677` | `scientific-writer-agent.md:713` |
-| C3 | **参考文献时效性**: research-assistant (agents/) 要求 ≥80%，shared/ 版本缺失此约束 | `agents/research-assistant-agent.md` | `company/shared-services/research-assistant-agent.md` |
+| C3 | **参考文献时效性**: 已修复 (2026-05-27) — 全部 Agent prompt 统一为近5年≥80% + 近10年≥95% 双重门槛，与 `check_ref_recency` 对齐 | — | — |
 
 ## 七、解决方案
 
@@ -184,3 +188,43 @@ check_all_refs_have_doi         # 每篇期刊引用有 DOI
 ```
 
 目标覆盖率: 37% → **80%+** (37/54 auto checks)
+
+---
+
+## 九、验证深度审计框架 (2026-05-27 新增)
+
+> 来源: qianLieXianChuanCI 项目发现`check_methods_results_1_to_1`只检查blueprint结构(形式)
+> 但未验证Methods声明的结局指标在Results中是否有定量回报(内容)。
+> 根因: 钱学森控制论架构正确，但检查函数实现深度参差不齐。
+
+### 深度分级
+
+| 级别 | 定义 | 检查内容 | 允许场景 | 漏检风险 |
+|:--:|------|---------|---------|:--:|
+| **L1 存在性** | 检查文件/段落是否存在 | `os.path.exists()` | 预检项(SAP存在、blueprint存在、clinical-review存在) | 低(文件存在即满足条件) |
+| **L2 结构性** | 检查字段/行数/格式 | 正则匹配、行数计数、格式验证 | 表格完整性、章节数量、DOI格式 | 中(结构正确可能内容错误) |
+| **L3 内容性** | 提取并验证具体数据语义 | 数值提取+比对+语义匹配 | 数值一致性、结局回报率、声明-回报映射 | 低(内容级验证) |
+
+### Phase 6 auto check 深度评估
+
+| 检查项 | 当前级别 | 应达级别 | 是否需要升级 |
+|--------|:--:|:--:|:--:|
+| `check_ref_count` | L2 (计数) | L2 | 否 |
+| `check_ref_recency` | L3 (提取年份+计算比例) | L3 | 否 |
+| `check_reference_claim_mapping` | L3 (双向比对) | L3 | 否 |
+| `check_reference_source_tier` | L3 (提取tier+统计) | L3 | 否 |
+| `check_classic_ratio` | L3 (计算比例) | L3 | 否 |
+| `check_methods_results_1_to_1` | **L1→L3** ✅ | L3 | 已升级(2026-05-27) |
+| `check_discussion_seven_paragraphs` | L2 (段落数) | L2 | 否(LLM check补充内容) |
+| `check_abstract_word_count` | L2 (词数) | L2 | 否 |
+| `check_doi_verification` | L2 (格式+fake检测) | L2 | 否 |
+| `check_all_refs_cited_in_text` | L3 (双向比对) | L3 | 否 |
+| `check_sap_exists` | L1 | L1 | 否(预检项) |
+| `check_imrad_blueprint_exists` | L1 | L1 | 否(预检项) |
+
+### 审计规则
+
+1. Phase 6 检查项中 L3 占比应 ≥ 80%
+2. 所有标记为「应达 L3 但为 L1/L2」的检查 → 必须升级, 纳入 P0 backlog
+3. 新增检查函数默认要求 L3 级别
+4. 每次规则变更时在 rule-propagation-checklist.md 中标注新增检查的深度级别
