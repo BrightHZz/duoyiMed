@@ -36,6 +36,7 @@ R — Resource Audit (资源审计)
     - Tier 1: 完全自给, 可直接执行
     - Tier 2: 需合作方 (注明类型), 评估合作可行性及交付周期
     - Tier 3: 不可执行, 建议放弃
+
   数据: 
     - PIC: PICU/NICU/CCU 住院数据 (~12,881 患者, 2010-2018)
     - MIMIC-IV: ICU 中的儿科亚组
